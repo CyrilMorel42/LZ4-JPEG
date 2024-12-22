@@ -1,0 +1,9 @@
+{
+    "C_Cpp.errorSquiggles": "enabled",
+    "files.associations": {
+        "string.h": "c",
+        "compression_engine.h": "c",
+        "file_handler.h": "c",
+        "sequence_handler.h": "c"
+    }
+}

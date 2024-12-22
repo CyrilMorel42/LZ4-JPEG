@@ -1,0 +1,6 @@
+
+00111111
+Match Offset: 3
+Match Length: 24
+Literal Length: 3
+Literals: abc
