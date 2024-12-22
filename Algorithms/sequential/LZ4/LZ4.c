@@ -4,6 +4,7 @@
 #include <string.h>
 #include <direct.h>
 
+
 #define MAX_MATCH_LENGTH  255
 #define MIN_MATCH_LENGTH  4
 #define WINDOW_SIZE       65536 //due to the 2 bytes limit for the match offset
@@ -88,8 +89,7 @@ uint8_t find_longest_match(uint8_t* input, size_t current_index, uint8_t* match_
     }
 }
 
-void write_output(LZ4Sequence sequence, const char* output_file) {//modify to print blocks
-    FILE* file = fopen(output_file, "ab");
+void write_sequence(LZ4Sequence sequence, FILE* file) {
     fwrite(&sequence.token, sizeof(uint8_t), 1, file);
     if (sequence.literal_length >= 15) {
         uint8_t remaining = sequence.literal_length - 15;
@@ -111,8 +111,32 @@ void write_output(LZ4Sequence sequence, const char* output_file) {//modify to pr
         }
         fwrite(&remaining, sizeof(uint8_t), 1, file);
     }
+}
+
+
+void write_output(LZ4Block block, const char* output_file) {
+    FILE* file = fopen(output_file, "ab");
+    if (!file) {
+        perror("Error opening output file");
+        return;
+    }
+
+    // Write the block token
+    printf("block token : %u\n", block.token);
+    if (fwrite(&block.token, sizeof(uint8_t), 1, file) != 1) {
+        perror("Error writing block token");
+        fclose(file);
+        return;
+    }
+
+    // Write all sequences
+    for (size_t i = 0; i < block.sequences; i++) {
+        write_sequence(block.block_sequences[i], file);
+    }
+
     fclose(file);
 }
+
 
 void add_sequence_to_block(LZ4Sequence seq, LZ4Block* block) {
     if(block->sequences == 0){
@@ -162,6 +186,8 @@ void lz4_encode(LZ4Context* context) {
         add_sequence_to_block(sequence, &currentBlock);
         //print_sequence_details(log_file, &sequence);
     }
+    currentBlock.token = currentBlock.sequences;
+    write_output(currentBlock, DEFAULT_OUTPUT_BIN_FILE);
     print_block_details(log_file, &currentBlock);
 }
 

@@ -3,9 +3,6 @@
         {
             "name": "Win32",
             "includePath": [
-                "${workspaceFolder}/Compression_API/compression_engine/include",
-                "${workspaceFolder}/Compression_API/file_handler/include",
-                "${workspaceFolder}/Compression_API/sequence_handler/include",
                 "${workspaceFolder}/**"
             ],
             "defines": [

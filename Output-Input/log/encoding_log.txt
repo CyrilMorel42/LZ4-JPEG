@@ -1,14 +1,8 @@
-Block encoded, containing 2 sequences:
+Block encoded, containing 1 sequences:
 
 00110101
 Match Offset: 3
 Match Length: 9
 Literal Length: 3
 Literals: abc
-
-00100000
-Match Offset: 0
-Match Length: 0
-Literal Length: 2
-Literals: dd
 
