@@ -145,16 +145,16 @@ void lz4_encode(LZ4Context* context) {
 
 void ensure_directories() {
     if (_mkdir("../../../Output-Input") != 0) {
-        perror("Unable to create directory");
+        perror("Unable to create directory.");
     }
     if (_mkdir("../../../Output-Input/bin") != 0) {
-        perror("Unable to create directory");
+        perror("Unable to create directory.");
     }
     if (_mkdir("../../../Output-Input/log") != 0) {
-        perror("Unable to create directory");
+        perror("Unable to create directory.");
     }
     if (_mkdir("../../../Output-Input/input") != 0) {
-        perror("Unable to create directory");
+        perror("Unable to create directory.");
     } else {
         // Write default content if input directory exists
         FILE* file = fopen(DEFAULT_INPUT_FILE, "w");
