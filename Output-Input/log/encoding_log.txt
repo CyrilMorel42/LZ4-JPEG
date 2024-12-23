@@ -1,8 +1,19 @@
-Block encoded, containing 1 sequences:
+Encoding 2 blocks with block size 64 bytes.
+Block encoded:
+00000001
 
-00110101
+00111111
 Match Offset: 3
-Match Length: 9
+Match Length: 61
 Literal Length: 3
 Literals: abc
+
+Block encoded:
+00000001
+
+00111111
+Match Offset: 3
+Match Length: 59
+Literal Length: 3
+Literals: bca
 
