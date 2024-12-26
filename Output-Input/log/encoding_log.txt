@@ -1,19 +1,30 @@
-Encoding 2 blocks with block size 64 bytes.
+Compressed Frame: token 1
+00000001
 Block encoded:
+byte size: 26
 00000001
 
-00111111
-Match Offset: 3
-Match Length: 61
-Literal Length: 3
-Literals: abc
+11111111
+Byte size: 23
 
+Match Offset: 16
+Match Length: 20
+Literal Length: 16
+Literals: abcdefghijklmnop
+
+
+01 01 1A 00 FF 17 00 01 61 62 63 64 65 66 67 68 69 6A 6B 6C 6D 6E 6F 70 10 00 01 Compressed Frame: token 1
+00000001
 Block encoded:
+byte size: 49
 00000001
 
-00111111
-Match Offset: 3
-Match Length: 59
-Literal Length: 3
-Literals: bca
+11111111
+Byte size: 23
+
+Match Offset: 128
+Match Length: 20
+Literal Length: 16
+Literals: 0xCC0xFFa0x00p0xE10x92w0xA79a10xFE0xFF0xFF0xFF
+
 
