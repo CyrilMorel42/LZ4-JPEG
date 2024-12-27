@@ -1,3 +1,13 @@
+/*  TODO:
+        check for redundant code and encapsulate better
+        separate the code into more part --> later modules
+        comment the code
+        write better logs and log file (readable comparison)
+        parallelism
+        handle line breaks in file
+        check uint16_t
+*/
+
 #pragma region init
 
 #include <stdio.h>
@@ -5,15 +15,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <direct.h>
+#include <time.h>
 
 #define MAX_MATCH_LENGTH  255
 #define MIN_MATCH_LENGTH  4
 #define WINDOW_SIZE       65536
-#define DEFAULT_BLOCK_LENGTH 64
+#define DEFAULT_BLOCK_LENGTH 300
 #define DEFAULT_LOG_FILE "../../../Output-Input/log/encoding_log.txt"
-#define DEFAULT_OUTPUT_BIN_FILE "../../../Output-Input/bin/output.bin"
+#define DEFAULT_COMPRESSED_FILE "../../../Output-Input/out/compressed.bin"
+#define DEFAULT_UNCOMPRESSED_FILE "../../../Output-Input/out/uncompressed.txt"
 #define DEFAULT_INPUT_FILE "../../../Output-Input/input/input.txt"
-#define DEFAULT_OUTPUT_HEX_FILE "../../../Output-Input/bin/output.txt"
+#define DEFAULT_OUTPUT_HEX_FILE "../../../Output-Input/out/compressed.txt"
 
 typedef struct {
     uint8_t token;
@@ -50,6 +62,24 @@ void print_binary_to_file(FILE* file, uint8_t num) {
         fprintf(file, "%d", (num >> i) & 1);
     }
 }
+
+// void print_timestamp() {
+//     time_t rawtime;
+//     struct tm *timeinfo;
+//     char buffer[80];
+
+//     // Get current time
+//     time(&rawtime);
+    
+//     // Convert time to local time format
+//     timeinfo = localtime(&rawtime);
+    
+//     // Format the time into a human-readable string (YYYY-MM-DD HH:MM:SS)
+//     strftime(buffer, 80, "%Y-%m-%d %H:%M:%S", timeinfo);
+    
+//     // Print the timestamp
+//     printf("Timestamp: %s\n", buffer);
+// }
 
 void dump_to_hex_file(const char *input_filename, const char *output_filename) {
     FILE *input_file = fopen(input_filename, "rb");
@@ -104,52 +134,58 @@ char** divide_input(const uint8_t* input_data, size_t input_size, size_t block_s
     *block_count = (input_size + block_size - 1) / block_size;
 
     char** blocks = (char**)malloc(*block_count * sizeof(char*));
-
     if (blocks == NULL) {
         perror("Error: Unable to allocate memory for blocks");
-
         exit(1);
     }
+
+    printf("Input size: %zu, Block size: %zu, Block count: %zu\n", input_size, block_size, *block_count);
 
     for (size_t i = 0; i < *block_count; i++) {
         size_t current_block_size = (i == *block_count - 1) ? input_size - i * block_size : block_size;
 
-        blocks[i] = (char*)malloc(current_block_size);
-
-        if (blocks[i] == NULL) {
-            perror("Error: Unable to allocate memory for a block");
-
+        if (current_block_size == 0 || current_block_size > input_size) {
+            fprintf(stderr, "Error: Invalid block size at block %zu. Current block size: %zu\n", i, current_block_size);
             for (size_t j = 0; j < i; j++) {
                 free(blocks[j]);
             }
-
             free(blocks);
+            exit(1);
+        }
 
+        blocks[i] = (char*)malloc(current_block_size);
+        if (blocks[i] == NULL) {
+            perror("Error: Unable to allocate memory for a block");
+            for (size_t j = 0; j < i; j++) {
+                free(blocks[j]);
+            }
+            free(blocks);
             exit(1);
         }
 
         memcpy(blocks[i], &input_data[i * block_size], current_block_size);
+
+        printf("Block %zu allocated with size %zu\n", i, current_block_size);
     }
 
     return blocks;
 }
 
+
 void ensure_directories() {
-    if (_mkdir("../../../Output-Input") != 0) {
-        perror("Unable to create directory");
+    if (_mkdir("../../../Output-Input") == 0) {
+        perror("Warning: File inexistant, new file instantiated: ");
     }
 
-    if (_mkdir("../../../Output-Input/bin") != 0) {
-        perror("Unable to create directory");
+    if (_mkdir("../../../Output-Input/bin") == 0) {
+        perror("Warning: File inexistant, new file instantiated: ");
     }
 
-    if (_mkdir("../../../Output-Input/log") != 0) {
-        perror("Unable to create directory");
+    if (_mkdir("../../../Output-Input/log") == 0) {
+        perror("Warning: File inexistant, new file instantiated: ");
     }
 
-    if (_mkdir("../../../Output-Input/input") != 0) {
-        perror("Unable to create directory");
-    } else {
+    if (_mkdir("../../../Output-Input/input") == 0) {
         printf("Fatal error: no input.txt file in directory: %s", DEFAULT_INPUT_FILE);
 
         exit(1);
@@ -157,7 +193,7 @@ void ensure_directories() {
 }
 
 void clear_files(){
-    FILE* output_file = fopen(DEFAULT_OUTPUT_BIN_FILE, "wb");
+    FILE* output_file = fopen(DEFAULT_COMPRESSED_FILE, "wb");
 
     fclose(output_file);
 
@@ -172,11 +208,17 @@ void clear_files(){
 
 void print_sequence_details(FILE* log_file, LZ4Sequence* sequence) {
     fprintf(log_file, "\n");
+
     print_binary_to_file(log_file, sequence->token);
+
     fprintf(log_file, "\nByte size: %u\n", sequence->byte_size);
+
     fprintf(log_file, "\nMatch Offset: %u\n", sequence->match_offset);
+
     fprintf(log_file, "Match Length: %zu\n", sequence->match_length);
+
     fprintf(log_file, "Literal Length: %zu\n", sequence->literal_length);
+    
     fprintf(log_file, "Literals: ");
 
     for (size_t i = 0; i < sequence->literal_length; i++) {
@@ -272,8 +314,9 @@ void free_block_sequences(LZ4Block* block) {
 
 void free_frame(LZ4Frame* frame) {
     if (frame == NULL) return; 
-
+    printf("frameblocks: %zu\n", frame->blocks);
     for (size_t i = 0; i < frame->blocks; ++i) {
+        printf("freeing block %d\n", i);
         free_block_sequences(&frame->frame_blocks[i]);
     }
 
@@ -341,8 +384,6 @@ void write_output(LZ4Frame* frame, FILE* output_file) {
 
     for (size_t i = 0; i < frame->blocks; i++) {
         write_block(&frame->frame_blocks[i], output_file);
-        
-        free_block_sequences(&frame->frame_blocks[i]);
     }
     
     free(frame->frame_blocks);
@@ -402,8 +443,6 @@ void add_block_to_frame(LZ4Frame* frame, LZ4Block block) {
     frame->frame_blocks[frame->blocks] = block;
 
     frame->blocks++;
-
-    printf("New number of blocks: %zu\n", frame->blocks);
 }
 
 void block_encode(const char* block_entry, size_t block_length, LZ4Block* block, FILE* log_file, FILE* output_file, LZ4Frame* frame) {
@@ -510,86 +549,111 @@ void block_encode(const char* block_entry, size_t block_length, LZ4Block* block,
     add_block_to_frame(frame, *block); 
 }
 
-void lz4_encode() {
+LZ4Context extract_uncompressed_file(FILE* file){
     LZ4Context context = {0};
 
-    LZ4Frame frame;
+    fseek(file, 0, SEEK_END);
 
-    frame.blocks=0;
+    long file_size = ftell(file);
 
-    frame.frame_blocks = NULL;
+    fseek(file, 0, SEEK_SET);
 
-    FILE* log_file = safe_open(DEFAULT_LOG_FILE, "a");
-
-    FILE* input_file = safe_open(DEFAULT_INPUT_FILE, "r");
-
-    FILE* output_file = safe_open(DEFAULT_OUTPUT_BIN_FILE, "ab");
-
-    fseek(input_file, 0, SEEK_END);
-
-    long file_size = ftell(input_file);
-
-    fseek(input_file, 0, SEEK_SET);
+    if(file_size<DEFAULT_BLOCK_LENGTH){
+        printf("Error: default block length is too high, please reduce it before proceding.");
+        exit(1);
+    }
 
     context.input_data = malloc(file_size + 1);
 
     if (context.input_data == NULL) {
         perror("Error: Unable to allocate memory");
 
-        fclose(input_file);
+        fclose(file);
 
-        fclose(log_file);
-
-        return;
+        exit(1);
     }
 
-    size_t bytes_read = fread(context.input_data, 1, file_size, input_file);
+    size_t bytes_read = fread(context.input_data, 1, file_size, file);
 
-    fclose(input_file);
+    context.input_size = bytes_read;
+
+    fclose(file);
 
     if (bytes_read != file_size) {
         perror("Error: Failed to read input file");
 
         free(context.input_data);
 
-        fclose(log_file);
-
-        return;
+        exit(1);
     }
 
     context.input_data[file_size] = '\0';
 
-    context.input_size = bytes_read;
-
-    size_t block_size = DEFAULT_BLOCK_LENGTH;  
-
-    size_t block_count = 0;
-
-    char** blocks = divide_input(context.input_data, context.input_size, block_size, &block_count);
-
-    for (size_t i = 0; i < block_count; i++) {
-        LZ4Block currentBlock = {0};  
-
-        size_t current_block_size = (i == block_count - 1) ? context.input_size - i * block_size : block_size;
-
-        block_encode(blocks[i], current_block_size, &currentBlock, log_file, output_file, &frame);
+    return context;
+}
+void lz4_encode() {
+    if(DEFAULT_BLOCK_LENGTH == 500){
+        printf("Error: block length cannot have the value 500");
+        exit(1);
     }
 
+    printf("Encoding started\n");
+
+    // Ensure directories exist (implementation not provided here)
+    ensure_directories();
+
+    // Open necessary files
+    FILE* log_file = safe_open(DEFAULT_LOG_FILE, "a");
+    FILE* input_file = safe_open(DEFAULT_INPUT_FILE, "r");
+    FILE* output_file = safe_open(DEFAULT_COMPRESSED_FILE, "ab");
+
+    // // Extract uncompressed data
+    LZ4Context context = extract_uncompressed_file(input_file);
+    printf("File extracted. Input size: %zu bytes\n", context.input_size);
+
+    // // Initialize the frame
+    LZ4Frame frame;
+    frame.blocks = 0;
+    frame.frame_blocks = NULL;
+
+    size_t block_size = DEFAULT_BLOCK_LENGTH;
+    size_t block_count = 0;
+
+    // Divide input data into blocks
+     char** blocks = divide_input(context.input_data, context.input_size, block_size, &block_count);
+     printf("Input divided into %zu blocks\n", block_count);
+
+    // // // Process each block
+    for (size_t i = 0; i < block_count; i++) {
+        printf("Processing block %zu\n", i);
+
+        LZ4Block currentBlock = {0};
+        size_t current_block_size = (i == block_count - 1) ? context.input_size - i * block_size : block_size;
+
+        if (blocks[i] == NULL) {
+            fprintf(stderr, "Error: Block %zu is NULL\n", i);
+            continue; // Skip this block to prevent further issues
+        }
+
+        block_encode(blocks[i], current_block_size, &currentBlock, log_file, output_file, &frame);
+
+        // Free block memory after encoding
+        
+    }
+
+    printf("Blocks encoded\n");
+
+    // // // // Print frame details and write the output
     print_frame_details(log_file, &frame);
-
     write_output(&frame, output_file);
-
-    printf("Encoding completed. Check %s for details.\n", DEFAULT_LOG_FILE);
-
+    printf("Output written\n");
+    // // Cleanup
     fclose(log_file);
-
     fclose(output_file);
-
     free(context.input_data);
-
     free_frame(&frame);
-
-    dump_to_hex_file(DEFAULT_OUTPUT_BIN_FILE, DEFAULT_OUTPUT_HEX_FILE);
+    dump_to_hex_file(DEFAULT_COMPRESSED_FILE, DEFAULT_OUTPUT_HEX_FILE);
+    printf("Encoding completed. Check %s for details.\n", DEFAULT_LOG_FILE);
 }
 
 void sequence_decode(char* input_data, LZ4Sequence* seq) {
@@ -613,7 +677,7 @@ void sequence_decode(char* input_data, LZ4Sequence* seq) {
     
     if (seq->literal_length >= 15) {
         while (input_data[pointer] == 255) {
-            seq->literal_length += 15;
+            seq->literal_length += 255;
 
             pointer++;
         }
@@ -656,25 +720,27 @@ void sequence_decode(char* input_data, LZ4Sequence* seq) {
 
     printf("\n");
 
-    pointer++; 
 
-    seq->match_offset = input_data[pointer] + (input_data[pointer + 1] << 8);
+    seq->match_offset = (uint16_t)(input_data[pointer] + (input_data[pointer + 1] << 8));
 
-    pointer += 2;
+    
 
-    if (seq->match_length >= 15) {
-        while (input_data[pointer] == 255) {
-            seq->match_length += 15;
-
-            pointer++;
-        }
-
-        seq->match_length += input_data[pointer];
-
-        pointer++;
+pointer += 2;  // Move the pointer forward by 2 (as required)
+if (seq->match_length >= 15) {
+    while (input_data[pointer] == 255) {
+        seq->match_length += 255;  // Adding 255 repeatedly
+        pointer++;  // Move pointer to next value
     }
 
-    seq->match_length += 4; 
+    // Ensure that input_data[pointer] is treated as an unsigned value (unsigned char)
+    seq->match_length += (size_t)(unsigned char)input_data[pointer];  // Cast explicitly to unsigned char first, then to size_t
+    printf("Adding input_data[pointer] = %X (decimal: %zu), new match_length: %zu\n", 
+           (unsigned char)input_data[pointer], (size_t)(unsigned char)input_data[pointer], seq->match_length);
+    pointer++;  // Move pointer to next value
+}
+
+// Finally, add 4 to match_length
+seq->match_length += 4;
 }
 
 void block_decode(char* input_data, LZ4Block* block) {
@@ -693,7 +759,7 @@ void block_decode(char* input_data, LZ4Block* block) {
     for (size_t i = 0; i < block->token; i++) {
         LZ4Sequence seq;
 
-        seq.byte_size = input_data[pointer+4] + input_data[pointer+5];
+        seq.byte_size = (uint16_t)(input_data[pointer + 4]) + ((uint16_t)(input_data[pointer + 5]) << 8);
 
         printf("sequence byte size: %d\n",seq.byte_size);
         
@@ -717,128 +783,257 @@ void block_decode(char* input_data, LZ4Block* block) {
     }
 }
 
-void LZ4_decode(char* input_bin_file, char* log) {   
-    FILE* input_file = fopen(input_bin_file, "rb");
+char* extract_compressed_bin_file(FILE* file){
+    fseek(file, 0, SEEK_END);
 
-    FILE* log_file = fopen(log, "a");
-
-    if (!input_file || !log_file) {
-        perror("Error opening file");
-
-        exit(EXIT_FAILURE);
-    }
-
-    fseek(input_file, 0, SEEK_END);
-
-    size_t file_size = ftell(input_file);
+    size_t file_size = ftell(file);
 
     if (file_size < 0) {
         perror("Error getting file size");
 
-        fclose(input_file);
-
-        fclose(log_file);
+        fclose(file);
 
         exit(EXIT_FAILURE);
     }
 
     printf("File size: %zu bytes\n", file_size); 
 
-    fseek(input_file, 0, SEEK_SET);
+    fseek(file, 0, SEEK_SET);
 
     char* input = malloc(file_size);
 
     if (!input) {
         perror("Error allocating memory");
 
-        fclose(input_file);
-
-        fclose(log_file);
+        fclose(file);
 
         exit(EXIT_FAILURE);
     }
 
-    size_t bytes_read = fread(input, 1, file_size, input_file);
+    size_t bytes_read = fread(input, 1, file_size, file);
 
     if (bytes_read != file_size) {
         fprintf(stderr, "Error: Expected %zu bytes, but only read %zu bytes.\n", file_size, bytes_read);
 
         free(input);
 
-        fclose(input_file);
+        fclose(file);
 
-        fclose(log_file);
+        fclose(file);
 
         exit(EXIT_FAILURE);
     }
 
-    printf("File content in hexadecimal:\n");
+    return input;
+}
 
-    for (size_t i = 0; i < bytes_read; i++) {
-        fprintf(log_file, "%02X ", (unsigned char)input[i]);
+void interpret_sequence(LZ4Sequence sequence) {
+    // Ensure that sequence literals are valid and initialized
+    if (sequence.literals == NULL || sequence.literal_length == 0) {
+        // Handle error
+        return;
+    }
+    if(sequence.match_length != 0){
+  // Create a buffer to hold the decompressed data
+// Check if the literal and match lengths are reasonable
+printf("literal_length: %zu, match_length: %zu\n", sequence.literal_length, sequence.match_length);
 
-        printf("%02X ", (unsigned char)input[i]);
+// Ensure that their sum doesn't overflow size_t
+size_t decompressed_size = sequence.literal_length + sequence.match_length;
+if (sequence.literal_length > SIZE_MAX - sequence.match_length) {
+    // Handle overflow case
+    printf("Overflow detected: literal_length + match_length exceeds SIZE_MAX.\n");
+    return;
+}
+
+// Allocate memory
+uint8_t* decompressed = (uint8_t*)malloc(decompressed_size);
+if (decompressed == NULL) {
+    // Handle memory allocation failure
+    printf("NULL");
+    printf("decompressed size : %zu \n", decompressed_size);
+    return;
+}
+
+
+    size_t current_pos = 0;
+
+    // Write literals (uncompressed data) to the decompressed buffer
+    for (size_t i = 0; i < sequence.literal_length; i++) {
+        if (current_pos < decompressed_size) {
+            decompressed[current_pos++] = sequence.literals[i];
+        } else {
+            // Handle buffer overflow (if any)
+            break;
+        }
     }
 
-    printf("\n");
+    // Handle the match data
+    for (size_t i = 0; i < sequence.match_length; i++) {
+        size_t match_pos = current_pos - sequence.match_offset;
+        if (match_pos < current_pos && current_pos < decompressed_size) {
+            decompressed[current_pos++] = decompressed[match_pos++];
+        }
+    }
 
-    LZ4Frame frame_decode = {0}; 
+    // Output the decompressed data
+    FILE* uncompressed = safe_open(DEFAULT_UNCOMPRESSED_FILE, "a");
+    if (uncompressed == NULL) {
+        // Handle file open error
+        free(decompressed);
+        return;
+    }
 
-    size_t block_count = input[0]; 
+    // Write decompressed data (literals + matches) to file
+    for (size_t i = 0; i < current_pos; i++) {
+        if (decompressed[i] >= 32 && decompressed[i] <= 126) {
+            fprintf(uncompressed, "%c", decompressed[i]);
+        } else {
+            fprintf(uncompressed, "0x%02X", decompressed[i]);
+        }
+    }
+    fclose(uncompressed);
+    free(decompressed);
+    }else{
+          // Create a buffer to hold the decompressed data
+    size_t decompressed_size = sequence.literal_length;
+    uint8_t* decompressed = (uint8_t*)malloc(decompressed_size);
+    
 
-    size_t pointer = 1;  
+    size_t current_pos = 0;
+
+    // Write literals (uncompressed data) to the decompressed buffer
+    for (size_t i = 0; i < sequence.literal_length; i++) {
+        if (current_pos < decompressed_size) {
+            decompressed[current_pos++] = sequence.literals[i];
+        }
+    }
+
+
+
+    // Output the decompressed data
+    FILE* uncompressed = safe_open(DEFAULT_UNCOMPRESSED_FILE, "a");
+    if (uncompressed == NULL) {
+        // Handle file open error
+        free(decompressed);
+        return;
+    }
+
+    // Write decompressed data (literals + matches) to file
+    for (size_t i = 0; i < current_pos; i++) {
+        if (decompressed[i] >= 32 && decompressed[i] <= 126) {
+            fprintf(uncompressed, "%c", decompressed[i]);
+        } else {
+            fprintf(uncompressed, "0x%02X", decompressed[i]);
+        }
+    }
+    fclose(uncompressed);
+    free(decompressed);
+    }
+}
+
+
+void interpret_frame(LZ4Frame frame){
+    FILE* uncompressed = safe_open(DEFAULT_UNCOMPRESSED_FILE, "w");
+    fclose(uncompressed);
+    for(size_t i = 0; i<frame.blocks;i++){
+        for(size_t j =0; j<frame.frame_blocks[i].sequences;j++){
+            interpret_sequence(frame.frame_blocks[i].block_sequences[j]);
+        }
+    }
+}
+
+void LZ4_decode(char* input_bin_file, char* log) {
+    if (DEFAULT_BLOCK_LENGTH == 500) {
+        printf("Error: block length cannot have the value 500");
+        exit(1);
+    }
+
+    ensure_directories();
+
+    FILE* input_file = safe_open(input_bin_file, "rb");
+
+    FILE* log_file = safe_open(log, "a");
+
+    LZ4Frame frame_decode = {0};
+
+    char* input = extract_compressed_bin_file(input_file);
+
+    size_t block_count = input[0];  // Number of blocks
+    size_t pointer = 1;  // Pointer to current position in input data
 
     frame_decode.frame_blocks = NULL;
-
     frame_decode.blocks = 0;
 
     for (size_t i = 0; i < block_count; i++) {
         LZ4Block block = {0}; 
 
-        size_t byte_size = input[pointer + 1] + input[pointer + 2]; 
-    
-        char *block_data = (char *)malloc(byte_size);
+       uint8_t byte1 = (uint8_t)input[pointer + 1];
+uint8_t byte2 = (uint8_t)input[pointer + 2];
+
+// Combine byte1 and byte2 into a uint16_t value (little-endian)
+size_t byte_size = byte1 + ((size_t)byte2 << 8);  // Calculate the size of the block
+
+        // Ensure that the byte_size is reasonable
+        if (byte_size <= 0) {
+            printf("Error: invalid block size at block %zu\n", i);
+            exit(EXIT_FAILURE);
+        }
+
+        // Allocate memory for the block
+        char* block_data = (char*)malloc(byte_size);
 
         if (block_data == NULL) {
             perror("Failed to allocate memory for block_data");
 
             free(input);
-
             fclose(input_file);
-
             fclose(log_file);
 
             exit(EXIT_FAILURE);
         }
 
+        // Copy the block data
         memcpy(block_data, &input[pointer], byte_size);
 
+        // Decode the block
         block_decode(block_data, &block);
 
-        block.byte_size+=3;
+        block.byte_size += 3;  // Update the block's byte size
 
+        // Add block to the frame
         add_block_to_frame(&frame_decode, block);
 
+        // Free block_data memory after processing
         free(block_data);
+
+        // Update the pointer to the next block's starting position
+        pointer += byte_size;
     }
 
+    // Print the frame details to the log
     print_frame_details(log_file, &frame_decode);
 
-    free(input);
+    // Free the memory for the input data and frame
 
+    free(input);
+    interpret_frame(frame_decode);
     free_frame(&frame_decode);
+
+    fclose(input_file);
+    fclose(log_file);
 }
 
 #pragma endregion LZ4_API
 
 int main() {
     ensure_directories();
-    
+
     clear_files();
 
     lz4_encode();
 
-    LZ4_decode(DEFAULT_OUTPUT_BIN_FILE, DEFAULT_LOG_FILE);
+    LZ4_decode(DEFAULT_COMPRESSED_FILE, DEFAULT_LOG_FILE);
 
     return 0;
 }
