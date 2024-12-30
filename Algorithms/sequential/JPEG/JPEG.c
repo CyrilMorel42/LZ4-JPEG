@@ -191,7 +191,7 @@ void create_rChrominance_image(char* filename,uint8_t** values, ImageData data) 
     }
 
     // Create PNG image from luminance data
-    create_png_image(filename, data.width, data.height, pixels);
+    create_png_image(filename, data.width/2, data.height, pixels);
 
     // Free the pixel data
     free_pixels(pixels, data.height);
@@ -207,20 +207,81 @@ void create_bChrominance_image(char* filename,uint8_t** values, ImageData data) 
     
 
     // Create PNG image from luminance data
-    create_png_image(filename, data.width, data.height, pixels);
+    create_png_image(filename, data.width/2, data.height, pixels);
 
     // Free the pixel data
     free_pixels(pixels, data.height);
 }
 
-void chroma_subsample(uint8_t*** values, ImageData data){ //technically, this would reduce the original size of the matrix, however, it is very complex to deal with, so for this research's purposes, i will only implement the effects on the image, not the transmitting part
-    for (size_t y = 0; y < data.height; y++) {
-        for (size_t x = 0; x < data.width; x++) {
-              if(x % 2==1){
-                (*values)[y][x] = (*values)[y][x-1];
-              }
+void chroma_subsample(uint8_t*** values, ImageData data) {
+    // Allocate memory for sub_sample (2D array of subsampled chroma values)
+    uint8_t** sub_sample = malloc(sizeof(uint8_t*) * data.height);
+    if (!sub_sample) {
+        // Handle memory allocation failure
+        return;
+    }
+
+    for (int y = 0; y < data.height; y++) {
+        sub_sample[y] = malloc(data.width / 2 * sizeof(uint8_t));
+        if (!sub_sample[y]) {
+            // Handle memory allocation failure
+            for (int i = 0; i < y; i++) {
+                free(sub_sample[i]);
+            }
+            free(sub_sample);
+            return;
         }
     }
+
+    // Perform chroma subsampling (4:2:2)
+    for (size_t y = 0; y < data.height; y++) {
+        for (size_t x = 1; x < data.width; x += 2) {
+            sub_sample[y][x / 2] = (*values)[y][x]; // Copy chroma values, reduce width by 2
+        }
+    }
+
+    // Free the original values memory
+    for (int y = 0; y < data.height; y++) {
+        free((*values)[y]); // Free each row
+    }
+    free(*values); // Free the outer array
+
+    // Allocate new memory for the subsampled chroma data (2D array)
+    *values = malloc(sizeof(uint8_t*) * data.height);
+    if (!(*values)) {
+        // Handle memory allocation failure
+        return;
+    }
+
+    for (int y = 0; y < data.height; y++) {
+        (*values)[y] = malloc(data.width / 2 * sizeof(uint8_t));
+        if (!(*values)[y]) {
+            // Handle memory allocation failure
+            for (int i = 0; i < y; i++) {
+                free((*values)[i]);
+            }
+            free(*values);
+            return;
+        }
+    }
+
+    // Copy the subsampled values back into *values
+    for (size_t y = 0; y < data.height; y++) {
+        for (size_t x = 0; x < data.width / 2; x++) {
+            (*values)[y][x] = sub_sample[y][x]; // Copy subsampled chroma data
+        }
+    }
+
+    // Free the temporary sub_sample memory
+    for (int y = 0; y < data.height; y++) {
+        free(sub_sample[y]);
+    }
+    free(sub_sample);
+}
+
+
+void discrete_cosine_transform(){
+
 }
 
 int main() {
