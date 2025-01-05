@@ -22,6 +22,10 @@
 *.la
 *.lo
 
+#IDE specifics
+.vscode/
+.idea/
+
 # Shared objects (inc. Windows DLLs)
 *.dll
 *.so
