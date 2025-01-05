@@ -300,40 +300,29 @@ void chroma_subsample(uint8_t*** values, ImageData data) {
     free(sub_sample);
 }
 
-void inverse_discrete_cosine_transform(uint8_t* data, size_t data_length, double** coefficients) {
-    //printf("Computing initial pixel values...\n");
-    *coefficients = malloc(data_length * sizeof(double));
-    int* corrected_values = malloc(data_length *sizeof(int));
+void inverse_discrete_cosine_transform(uint8_t (*values)[64], size_t data_length, double* coefficients) {
 
-    if (*coefficients == NULL) {
-        fprintf(stderr, "Memory allocation failed!\n");
-        exit(EXIT_FAILURE);
-    }
- 
-
-  for (size_t i = 0; i < data_length; i++) {
-    int corrected_value = (int)data[i] - 128; 
-    corrected_values[i] = corrected_value; 
+    // Temporary array to store calculated values
+    double temp_values[data_length];
+    for (size_t n = 0; n < data_length; n++) {
+        temp_values[n] = 0.0;
     }
 
-
-    for (size_t k = 0; k < data_length; k++) {
-    (*coefficients)[k] = 0.0;
-}
-
-    for (size_t k = 0; k < data_length; k++) {
-        for (size_t n = 0; n < data_length; n++) {
-            (*coefficients)[k] += ((double)corrected_values[n]) * cos((PI / data_length) * (n + 0.5) * k);
-        }
-
-        if(k == 0){
-            (*coefficients)[k] *= sqrt(1.0 / data_length);
-        }else{
-            (*coefficients)[k] *= sqrt(2.0 / data_length);
+    // Perform the IDCT
+    for (size_t n = 0; n < data_length; n++) {
+        for (size_t k = 0; k < data_length; k++) {
+            double scaling = (k == 0) ? sqrt(1.0 / data_length) : sqrt(2.0 / data_length);
+            temp_values[n] += coefficients[k] * cos((PI / data_length) * k * (n + 0.5)) * scaling;
         }
     }
 
-    free(corrected_values);
+     // Convert to uint8_t and clamp
+    for (size_t n = 0; n < data_length; n++) {
+        int value = (int)(temp_values[n] + 128); // Add 128 for unsigned representation
+        if (value < 0) value = 0;
+        if (value > 255) value = 255;
+        (*values)[n] = (uint8_t)value;
+    }
 }
 
 
@@ -415,6 +404,10 @@ PixelGroup* divide_image(uint8_t** values, ImageData data, size_t group_size) {
     return groups;
 }
 
+void assemble_image(ImageData* output, ImageData original, PixelGroup* groups){
+    //stitch together the blocks
+}
+
 void Quantize(double** luminance){
     
     for(size_t i = 0; i< 64; i++){
@@ -455,6 +448,13 @@ int main() {
      size_t total_blocks = (size_t)ceil((double)image.pixel_count / 64);
          printf("dividing input into 8x8 blocks...\n");
      PixelGroup* blocks = divide_image(luminance_matrix, image, 8);
+      printf("First group (8x8 block):\n");
+    for (size_t i = 0; i < 8; i++) { 
+        for (size_t j = 0; j < 8; j++) {
+            printf("%d ", (int)(blocks[0].values[i * 8 + j])); 
+        }
+        printf("\n");
+    }
      printf("Computing DCT-II coefficients...\n");
      for(size_t i = 0; i < total_blocks; i++){
         
@@ -471,17 +471,21 @@ int main() {
          Inverse_quantize(&(blocks[i].coefficients));
      }
 
+         printf("Inverse-DCT the values...\n");
+     for(size_t i = 0; i < total_blocks; i++){
+         inverse_discrete_cosine_transform(&(blocks[i].values), 64, blocks[i].coefficients);
+     }
+
  printf("First group (8x8 block):\n");
     for (size_t i = 0; i < 8; i++) { 
         for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[0].coefficients[i * 8 + j])); 
+            printf("%d ", (int)(blocks[0].values[i * 8 + j])); 
         }
         printf("\n");
     }
 
     
     for(size_t i = 0; i < total_blocks; i++){
-         
          free(blocks[i].coefficients);
     }
      free(blocks);
