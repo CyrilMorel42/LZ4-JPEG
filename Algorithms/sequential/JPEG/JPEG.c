@@ -130,7 +130,8 @@ void build_rChrominance_matrix(ImageData data, uint8_t*** matrix) {
 
     for (size_t y = 0; y < data.height; y++) {
         for (size_t x = 0; x < data.width; x++) {
-            (*matrix)[y][x] = -0.1687 * data.pixels[y][x].r - 0.3313 * data.pixels[y][x].g + 0.5 * data.pixels[y][x].b;
+            (*matrix)[y][x] = 0.5 * data.pixels[y][x].r - 0.42 * data.pixels[y][x].g - 0.081 * data.pixels[y][x].b;
+            //printf("%d\n", (*matrix)[y][x]);
         }
     }
 }
@@ -145,7 +146,7 @@ void build_bChrominance_matrix(ImageData data, uint8_t*** matrix) {
 
     for (size_t y = 0; y < data.height; y++) {
         for (size_t x = 0; x < data.width; x++) {
-            (*matrix)[y][x] = 0.5 * data.pixels[y][x].r - 0.4187 * data.pixels[y][x].g - 0.813 * data.pixels[y][x].b;
+            (*matrix)[y][x] =  0.17 * data.pixels[y][x].r - 0.33 * data.pixels[y][x].g + 0.5 * data.pixels[y][x].b;
         }
     }
 }
@@ -217,17 +218,17 @@ void create_rChrominance_image(char* filename,uint8_t** values, ImageData data) 
     }
 
 
-    for (size_t y = 0; y < data.height; y++) {
+          for (size_t y = 0; y < data.height; y++) {
         for (size_t x = 0; x < data.width; x++) {
-            pixels[y][x].r = values[y][x];
-            pixels[y][x].g = 0;
-            pixels[y][x].b = 0;
+            pixels[y][x].r = 128+1.402*(values[y][x]-128);
+            pixels[y][x].g = 128-0.344*(128-128)-0.714*(values[y][x]-128);
+            pixels[y][x].b = 128 + 1.772*(128-128);
             pixels[y][x].a = 255; 
         }
     }
 
 
-    create_png_image(filename, data.width/2, data.height, pixels);
+    create_png_image(filename, data.width, data.height, pixels);
 
     free_pixels(pixels, data.height);
 }
@@ -238,7 +239,16 @@ void create_bChrominance_image(char* filename,uint8_t** values, ImageData data) 
         pixels[y] = malloc(data.width * sizeof(Pixel));
     }
 
-    create_png_image(filename, data.width/2, data.height, pixels);
+        for (size_t y = 0; y < data.height; y++) {
+        for (size_t x = 0; x < data.width; x++) {
+            pixels[y][x].r = 128+1.402*(128-128);
+            pixels[y][x].g = 128-0.344*(values[y][x]-128)-0.714*(128-128);
+            pixels[y][x].b = 128 + 1.772*(values[y][x]-128);
+            pixels[y][x].a = 255; 
+        }
+    }
+
+    create_png_image(filename, data.width, data.height, pixels);
 
 
     free_pixels(pixels, data.height);
@@ -329,68 +339,104 @@ double calculate_mse(uint8_t** original, Pixel** reconstructed, size_t rows, siz
     return mse;
 }
 
-
-void inverse_discrete_cosine_transform(uint8_t (*values)[64], size_t data_length, double* coefficients) {
-
-    // Temporary array to store calculated values
-    double temp_values[data_length];
-    for (size_t n = 0; n < data_length; n++) {
-        temp_values[n] = 0.0;
-    }
-
-    // Perform the IDCT
-    for (size_t n = 0; n < data_length; n++) {
-        for (size_t k = 0; k < data_length; k++) {
-            double scaling = (k == 0) ? sqrt(1.0 / data_length) : sqrt(2.0 / data_length);
-            temp_values[n] += coefficients[k] * cos((PI / data_length) * k * (n + 0.5)) * scaling;
-        }
-    }
-
-     // Convert to uint8_t and clamp
-    for (size_t n = 0; n < data_length; n++) {
-        int value = (int)(temp_values[n] + 128); // Add 128 for unsigned representation
-        if (value < 0) value = 0;
-        if (value > 255) value = 255;
-        (*values)[n] = (uint8_t)value;
-    }
-}
-
-
-void discrete_cosine_transform(uint8_t* data, size_t data_length, double** coefficients) {
-
-    *coefficients = malloc(data_length * sizeof(double));
-    int* corrected_values = malloc(data_length *sizeof(int));
-
-    if (*coefficients == NULL) {
+void inverse_discrete_cosine_transform(uint8_t* values, size_t width, size_t height, double* coefficients) {
+    double* temp_values = malloc(width * height * sizeof(double));
+    if (!temp_values) {
         fprintf(stderr, "Memory allocation failed!\n");
         exit(EXIT_FAILURE);
     }
- 
 
-  for (size_t i = 0; i < data_length; i++) {
-    int corrected_value = (int)data[i] - 128; 
-    corrected_values[i] = corrected_value; 
+    // Initialize the output block to zero
+    for (size_t i = 0; i < width * height; i++) {
+        temp_values[i] = 0.0;
     }
 
+    // Perform 2D IDCT-II
+    for (size_t x = 0; x < width; x++) {          
+        for (size_t y = 0; y < height; y++) {      
+            double sum = 0.0;
 
-    for (size_t k = 0; k < data_length; k++) {
-    (*coefficients)[k] = 0.0;
+           for (size_t u = 0; u < height; u++) {  
+    for (size_t v = 0; v < width; v++) {
+                    double alpha_u = (u == 0) ? sqrt(1.0 / width) : sqrt(2.0 / width);
+                    double alpha_v = (v == 0) ? sqrt(1.0 / height) : sqrt(2.0 / height);
+
+                    double cos_x = cos((PI * (2 * x + 1) * u) / (2.0 * width));
+                    double cos_y = cos((PI * (2 * y + 1) * v) / (2.0 * height));
+
+                    sum += alpha_u * alpha_v *coefficients[u * width + v] * cos_x * cos_y;
+                }
+            }
+
+            // Store result in temp buffer
+            temp_values[x * width + y] = sum;
+        }
+    }
+
+    // Convert to uint8_t and clamp
+    for (size_t i = 0; i < width * height; i++) {
+        int value = (int)round(temp_values[i] + 128.0);
+        values[i] = (value < 0) ? 0 : (value > 255) ? 255 : (uint8_t)value;
+    }
+
+    free(temp_values);
 }
 
-    for (size_t k = 0; k < data_length; k++) {
-        for (size_t n = 0; n < data_length; n++) {
-            (*coefficients)[k] += ((double)corrected_values[n]) * cos((PI / data_length) * (n + 0.5) * k);
-        }
 
-        if(k == 0){
-            (*coefficients)[k] *= sqrt(1.0 / data_length);
-        }else{
-            (*coefficients)[k] *= sqrt(2.0 / data_length);
+
+
+
+
+
+void discrete_cosine_transform(uint8_t* data, size_t data_width, size_t data_height, double** coefficients) {
+    *coefficients = malloc(data_width * data_height * sizeof(double));
+    int* corrected_values = malloc(data_width * data_height * sizeof(int));
+
+    if (!*coefficients || !corrected_values) {
+        free(*coefficients);
+        free(corrected_values);
+        fprintf(stderr, "Memory allocation failed!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Shift input data range
+    for (size_t i = 0; i < data_width * data_height; i++) {
+        corrected_values[i] = (int)data[i] - 128;
+    }
+
+    // printf("Corrected values:\n");
+    // for (size_t i = 0; i < data_width * data_height; i++) {
+    //     printf("%d ", corrected_values[i]);
+    //     if ((i + 1) % data_width == 0) printf("\n");
+    // }
+    // printf("\n");
+
+    // Perform the 2D DCT-II
+    for (size_t u = 0; u < data_height; u++) {  
+        for (size_t v = 0; v < data_width; v++) {  
+            double sum = 0.0;
+
+            for (size_t x = 0; x < data_height; x++) { 
+                for (size_t y = 0; y < data_width; y++) { 
+                    double cos_x = cos((PI * (2 * x + 1) * u) / (2.0 * data_height));
+                    double cos_y = cos((PI * (2 * y + 1) * v) / (2.0 * data_width));
+                    sum += corrected_values[x * data_width + y] * cos_x * cos_y;
+                }
+            }
+
+         //   printf("Sum at (u=%zu, v=%zu): %f\n", u, v, sum);
+
+            double alpha_u = (u == 0) ? 1/sqrt(2) : 1;
+            double alpha_v = (v == 0) ? 1/sqrt(2) : 1;
+            (*coefficients)[u * data_width + v] = alpha_u * alpha_v * sum*(2/(sqrt(data_height*data_width)));
+
+            //printf("Coefficient at (u=%zu, v=%zu): %f\n", u, v, (*coefficients)[u * data_width + v]);
         }
     }
 
     free(corrected_values);
 }
+
 
 PixelGroup* divide_image(uint8_t** luminance_values, uint8_t** rChrominance_values, uint8_t** bChrominance_values, ImageData data, size_t group_size) {
     size_t blocks_per_row = (data.width + group_size - 1) / group_size;  
@@ -517,15 +563,21 @@ int main() {
     uint8_t** rChrominance_matrix;
     build_rChrominance_matrix(image, &rChrominance_matrix);
 
-    printf("Performing chroma subsampling on red chrominance...\n");
-    chroma_subsample(&rChrominance_matrix, image);
+  
 
     printf("Building blue chrominance matrix...\n");
     uint8_t** bChrominance_matrix;
     build_bChrominance_matrix(image, &bChrominance_matrix);
 
+    create_bChrominance_image("bChrominance.png", bChrominance_matrix, image);
+     create_rChrominance_image("rChrominance.png", rChrominance_matrix, image);
+     create_luminance_image("luminance.png", luminance_matrix, image);
+
     printf("Performing chroma subsampling on blue chrominance...\n");
     chroma_subsample(&bChrominance_matrix, image);
+
+      printf("Performing chroma subsampling on red chrominance...\n");
+   chroma_subsample(&rChrominance_matrix, image);
 
     size_t total_blocks = (size_t)ceil((double)image.pixel_count / 64);
     printf("Dividing input into 8x8 blocks (Total blocks: %zu)...\n", total_blocks);
@@ -534,7 +586,7 @@ int main() {
     printf("First luminance block (8x8):\n");
     for (size_t i = 0; i < 8; i++) {
         for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[100].lum_values[i * 8 + j]));
+            printf("%d ", (blocks[0].lum_values[i * 8 + j]));
         }
         printf("\n");
     }
@@ -544,7 +596,7 @@ int main() {
     printf("First red chrominance block (4x8):\n");
     for (size_t i = 0; i < 4; i++) {
         for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[0].r_values[i * 8 + j]));
+            printf("%d ", (blocks[0].r_values[i * 8 + j]));
         }
         printf("\n");
     }
@@ -554,45 +606,47 @@ int main() {
     printf("Computing DCT-II coefficients for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
        // printf("Processing block %zu/%zu\n", i + 1, total_blocks);
-        discrete_cosine_transform(blocks[i].lum_values, 64, &(blocks[i].lum_coefficients));
-        discrete_cosine_transform(blocks[i].r_values, 32, &(blocks[i].r_coefficients));
-        discrete_cosine_transform(blocks[i].b_values, 32, &(blocks[i].b_coefficients));
+        discrete_cosine_transform(blocks[i].lum_values, 8,8, &(blocks[i].lum_coefficients));
+        discrete_cosine_transform(blocks[i].r_values, 4,8, &(blocks[i].r_coefficients));
+        discrete_cosine_transform(blocks[i].b_values, 4,8, &(blocks[i].b_coefficients));
     }
 
         printf("First luminance coefficients block (8x8):\n");
     for (size_t i = 0; i < 8; i++) {
         for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[100].lum_coefficients[i * 8 + j]));
+           printf("%.2f ", blocks[0].lum_coefficients[i * 8 + j]);
         }
         printf("\n");
     }
 
 
-
-    printf("First red coefficients block (4x8):\n");
-    for (size_t i = 0; i < 4; i++) {
-        for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[0].r_coefficients[i * 8 + j]));
-        }
-        printf("\n");
-    }
 
     printf("Quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
         //printf("Quantizing block %zu/%zu\n", i + 1, total_blocks);
-        Quantize(&(blocks[i].lum_coefficients));
+       // Quantize(&(blocks[i].lum_coefficients));
+    }
+
+            printf("First luminance coefficients quantized block (8x8):\n");
+    for (size_t i = 0; i < 8; i++) {
+        for (size_t j = 0; j < 8; j++) {
+            printf("%d ", (int)(blocks[0].lum_coefficients[i * 8 + j]));
+        }
+        printf("\n");
     }
 
     printf("Inverse-quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
         //printf("Inverse quantizing block %zu/%zu\n", i + 1, total_blocks);
-        Inverse_quantize(&(blocks[i].lum_coefficients));
+      //  Inverse_quantize(&(blocks[i].lum_coefficients));
     }
 
     printf("Performing Inverse-DCT on the values for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
        // printf("Inverse DCT on block %zu/%zu\n", i + 1, total_blocks);
-        inverse_discrete_cosine_transform(&(blocks[i].lum_values), 64, blocks[i].lum_coefficients);
+       inverse_discrete_cosine_transform(blocks[i].lum_values, 8,8, blocks[i].lum_coefficients);
+        inverse_discrete_cosine_transform(blocks[i].b_values, 4,8, blocks[i].b_coefficients);
+        inverse_discrete_cosine_transform(blocks[i].r_values, 4,8, blocks[i].r_coefficients);
     }
 
     printf("Assembling the reconstructed image...\n");
@@ -608,7 +662,7 @@ int main() {
     printf("First luminance block after reconstruction (8x8):\n");
     for (size_t i = 0; i < 8; i++) {
         for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[100].lum_values[i * 8 + j]));
+            printf("%d ", (int)(blocks[0].lum_values[i * 8 + j]));
         }
         printf("\n");
     }
