@@ -24,15 +24,16 @@ size_t LUMINANCE_QUANTIZATION_TABLE[64] = {
 
 
 
-size_t CHROMINANCE_QUANTIZATION_TABLE [64] = {
-17, 18, 24, 47, 99, 99, 99, 99,
-        18, 21, 26, 66, 99, 99, 99, 99,
-        24, 26, 56, 99, 99, 99, 99, 99,
-        47, 66, 99, 99, 99, 99, 99, 99,
-        99, 99, 99, 99, 99, 99, 99, 99,
-        99, 99, 99, 99, 99, 99, 99, 99,
-        99, 99, 99, 99, 99, 99, 99, 99,
-        99, 99, 99, 99, 99, 99, 99, 99
+size_t CHROMINANCE_QUANTIZATION_TABLE [32] = {
+17,  18,  24,  47  ,
+18,  21,  26,  66,  
+24,  26,  56,  99,  
+47,  66,  99,  99,  
+66,  99,  99,  99,  
+99,  99,  99 , 99,  
+99,  99 , 99,  99,  
+99,  99 , 99,  99,  
+
     };
 
 
@@ -516,12 +517,25 @@ void assemble_image(ImageData* output, ImageData original, PixelGroup* groups) {
 
                     if (global_row < output->height && global_col < output->width) {
                         size_t local_index = local_row * group_size + local_col;
-                        uint8_t luminance = groups[block_index].lum_values[local_index];
+                uint8_t Y = groups[block_index].lum_values[local_index];
+uint8_t Cb = groups[block_index].b_values[local_index]; //doesn't account for chroma subsample
+uint8_t Cr = groups[block_index].r_values[local_index]; 
 
-                        output->pixels[global_row][global_col].r = luminance;
-                        output->pixels[global_row][global_col].g = luminance;
-                        output->pixels[global_row][global_col].b = luminance;
-                        output->pixels[global_row][global_col].a = 255; 
+// Convert YCbCr to RGB
+int R = (int)(Y + 1.402 * (Cr - 128));
+int G = (int)(Y - 0.344136 * (Cb - 128) - 0.714136 * (Cr - 128));
+int B = (int)(Y + 1.772 * (Cb - 128));
+
+// Clamp values to [0, 255]
+R = (R < 0) ? 0 : (R > 255) ? 255 : R;
+G = (G < 0) ? 0 : (G > 255) ? 255 : G;
+B = (B < 0) ? 0 : (B > 255) ? 255 : B;
+
+// Assign to output pixel
+output->pixels[global_row][global_col].r = (uint8_t)R;
+output->pixels[global_row][global_col].g = (uint8_t)G;
+output->pixels[global_row][global_col].b = (uint8_t)B;
+output->pixels[global_row][global_col].a = 255;
                     }
                 }
             }
@@ -529,18 +543,18 @@ void assemble_image(ImageData* output, ImageData original, PixelGroup* groups) {
     }
 }
 
-void Quantize(double** luminance){
+void Quantize(double** luminance, size_t* table, size_t size){
     
-    for(size_t i = 0; i< 64; i++){
-        (*luminance)[i] /= LUMINANCE_QUANTIZATION_TABLE[i];
+    for(size_t i = 0; i< size; i++){
+        (*luminance)[i] /= table[i];
         (*luminance)[i] = (int)(*luminance)[i];
     }
 }
 
-void Inverse_quantize(double** luminance){
+void Inverse_quantize(double** luminance, size_t* table, size_t size){
     
-    for(size_t i = 0; i< 64; i++){
-        (*luminance)[i] *= LUMINANCE_QUANTIZATION_TABLE[i];
+    for(size_t i = 0; i< size; i++){
+        (*luminance)[i] *= table[i];
     }
 }
 
@@ -624,7 +638,9 @@ int main() {
     printf("Quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
         //printf("Quantizing block %zu/%zu\n", i + 1, total_blocks);
-       // Quantize(&(blocks[i].lum_coefficients));
+       Quantize(&(blocks[i].lum_coefficients), LUMINANCE_QUANTIZATION_TABLE, 64);
+       Quantize(&(blocks[i].b_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
+       Quantize(&(blocks[i].r_coefficients),CHROMINANCE_QUANTIZATION_TABLE, 32);
     }
 
             printf("First luminance coefficients quantized block (8x8):\n");
@@ -638,7 +654,9 @@ int main() {
     printf("Inverse-quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
         //printf("Inverse quantizing block %zu/%zu\n", i + 1, total_blocks);
-      //  Inverse_quantize(&(blocks[i].lum_coefficients));
+       Inverse_quantize(&(blocks[i].lum_coefficients), LUMINANCE_QUANTIZATION_TABLE, 64);
+           Inverse_quantize(&(blocks[i].b_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
+       Inverse_quantize(&(blocks[i].r_coefficients),CHROMINANCE_QUANTIZATION_TABLE, 32);
     }
 
     printf("Performing Inverse-DCT on the values for all blocks...\n");
