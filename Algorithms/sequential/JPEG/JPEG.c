@@ -489,7 +489,6 @@ PixelGroup* divide_image(uint8_t** luminance_values, uint8_t** rChrominance_valu
 
 
 void assemble_image(ImageData* output, ImageData original, PixelGroup* groups) {
-
     output->height = original.height;
     output->width = original.width;
     output->pixel_count = original.pixel_count;
@@ -499,11 +498,9 @@ void assemble_image(ImageData* output, ImageData original, PixelGroup* groups) {
         output->pixels[y] = malloc(output->width * sizeof(Pixel));
     }
 
-
-    const size_t group_size = 8; 
+    const size_t group_size = 8;
     const size_t blocks_per_row = (original.width + group_size - 1) / group_size;
     const size_t blocks_per_col = (original.height + group_size - 1) / group_size;
-
 
     for (size_t block_row = 0; block_row < blocks_per_col; block_row++) {
         for (size_t block_col = 0; block_col < blocks_per_row; block_col++) {
@@ -514,34 +511,41 @@ void assemble_image(ImageData* output, ImageData original, PixelGroup* groups) {
                     size_t global_row = block_row * group_size + local_row;
                     size_t global_col = block_col * group_size + local_col;
 
-
                     if (global_row < output->height && global_col < output->width) {
                         size_t local_index = local_row * group_size + local_col;
-                uint8_t Y = groups[block_index].lum_values[local_index];
-uint8_t Cb = groups[block_index].b_values[local_index]; //doesn't account for chroma subsample
-uint8_t Cr = groups[block_index].r_values[local_index]; 
 
-// Convert YCbCr to RGB
-int R = (int)(Y + 1.402 * (Cr - 128));
-int G = (int)(Y - 0.344136 * (Cb - 128) - 0.714136 * (Cr - 128));
-int B = (int)(Y + 1.772 * (Cb - 128));
+                        // Get luminance value for every pixel
+                        uint8_t Y = groups[block_index].lum_values[local_index];
 
-// Clamp values to [0, 255]
-R = (R < 0) ? 0 : (R > 255) ? 255 : R;
-G = (G < 0) ? 0 : (G > 255) ? 255 : G;
-B = (B < 0) ? 0 : (B > 255) ? 255 : B;
+                        // Compute the corresponding chroma index (subsampled at 4:2:2)
+                        size_t chroma_index = local_row * (group_size / 2) + (local_col / 2);
 
-// Assign to output pixel
-output->pixels[global_row][global_col].r = (uint8_t)R;
-output->pixels[global_row][global_col].g = (uint8_t)G;
-output->pixels[global_row][global_col].b = (uint8_t)B;
-output->pixels[global_row][global_col].a = 255;
+                        // Get shared chrominance values (Cb and Cr are shared between two pixels horizontally)
+                        uint8_t Cb = groups[block_index].b_values[chroma_index];
+                        uint8_t Cr = groups[block_index].r_values[chroma_index];
+
+                        // Convert YCbCr to RGB
+                        int R = (int)(Y + 1.402 * (Cr - 128));
+                        int G = (int)(Y - 0.344136 * (Cb - 128) - 0.714136 * (Cr - 128));
+                        int B = (int)(Y + 1.772 * (Cb - 128));
+
+                        // Clamp values to [0, 255]
+                        R = (R < 0) ? 0 : (R > 255) ? 255 : R;
+                        G = (G < 0) ? 0 : (G > 255) ? 255 : G;
+                        B = (B < 0) ? 0 : (B > 255) ? 255 : B;
+
+                        // Assign to output pixel
+                        output->pixels[global_row][global_col].r = (uint8_t)R;
+                        output->pixels[global_row][global_col].g = (uint8_t)G;
+                        output->pixels[global_row][global_col].b = (uint8_t)B;
+                        output->pixels[global_row][global_col].a = 255;
                     }
                 }
             }
         }
     }
 }
+
 
 void Quantize(double** luminance, size_t* table, size_t size){
     
@@ -558,8 +562,81 @@ void Inverse_quantize(double** luminance, size_t* table, size_t size){
     }
 }
 
+// Function to reconstruct a chrominance matrix from blocks
+void reconstruct_chrominance_matrix(PixelGroup* blocks, uint8_t*** chrominance_matrix, ImageData image, char channel) {
+    size_t block_index = 0;
 
+    // Allocate memory for the reconstructed chrominance matrix
+    *chrominance_matrix = (uint8_t**)malloc(image.height * sizeof(uint8_t*));
+    for (size_t i = 0; i < image.height; i++) {
+        (*chrominance_matrix)[i] = (uint8_t*)malloc(image.width * sizeof(uint8_t));
+        memset((*chrominance_matrix)[i], 0, image.width * sizeof(uint8_t)); // Initialize to zero
+    }
 
+    // Loop through the image in 8x8 blocks
+    for (size_t y = 0; y < image.height; y += 8) {
+        for (size_t x = 0; x < image.width; x += 8) {
+            PixelGroup* block = &blocks[block_index++];
+            
+            // Chrominance matrices are subsampled (4x8 for 4:2:0 chroma subsampling)
+            for (size_t i = 0; i < 4; i++) {
+                for (size_t j = 0; j < 8; j++) {
+                    if ((y + i) < image.height && (x + j) < image.width) {
+                        if (channel == 'R') {
+                            (*chrominance_matrix)[y + i][x + j] = block->r_values[i * 8 + j];
+                        } else if (channel == 'B') {
+                            (*chrominance_matrix)[y + i][x + j] = block->b_values[i * 8 + j];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void zigzag_pattern(size_t width, size_t height, double* input, double* output) {
+    size_t index = 0;
+    for (size_t n = 0; n < width + height - 1; n++) {
+        size_t start = (n < height) ? 0 : n - height + 1;
+        size_t end = (n < width) ? n : width - 1;
+
+        if (n % 2 == 0) {
+            for (size_t i = start; i <= end; i++) {
+                size_t x = n - i;
+                size_t y = i;
+                output[index++] = input[x * width + y];
+            }
+        } else {
+            for (size_t i = start; i <= end; i++) {
+                size_t x = i;
+                size_t y = n - i;
+                output[index++] = input[x * width + y];
+            }
+        }
+    }
+}
+
+void reverse_zigzag_pattern(size_t width, size_t height, double* input, double* output) {
+    size_t index = 0;
+    for (size_t n = 0; n < width + height - 1; n++) {
+        size_t start = (n < height) ? 0 : n - height + 1;
+        size_t end = (n < width) ? n : width - 1;
+
+        if (n % 2 == 0) {
+            for (size_t i = start; i <= end; i++) {
+                size_t x = n - i;
+                size_t y = i;
+                output[x * width + y] = input[index++];
+            }
+        } else {
+            for (size_t i = start; i <= end; i++) {
+                size_t x = i;
+                size_t y = n - i;
+                output[x * width + y] = input[index++];
+            }
+        }
+    }
+}
 int main() {
     printf("Constructing file path...\n");
     char* path = construct_path("og.png", IMAGES_DIRECTORY);
@@ -577,94 +654,92 @@ int main() {
     uint8_t** rChrominance_matrix;
     build_rChrominance_matrix(image, &rChrominance_matrix);
 
-  
-
     printf("Building blue chrominance matrix...\n");
     uint8_t** bChrominance_matrix;
     build_bChrominance_matrix(image, &bChrominance_matrix);
 
     create_bChrominance_image("bChrominance.png", bChrominance_matrix, image);
-     create_rChrominance_image("rChrominance.png", rChrominance_matrix, image);
-     create_luminance_image("luminance.png", luminance_matrix, image);
+    create_rChrominance_image("rChrominance.png", rChrominance_matrix, image);
+    create_luminance_image("luminance.png", luminance_matrix, image);
 
     printf("Performing chroma subsampling on blue chrominance...\n");
     chroma_subsample(&bChrominance_matrix, image);
 
-      printf("Performing chroma subsampling on red chrominance...\n");
-   chroma_subsample(&rChrominance_matrix, image);
+    printf("Performing chroma subsampling on red chrominance...\n");
+    chroma_subsample(&rChrominance_matrix, image);
 
     size_t total_blocks = (size_t)ceil((double)image.pixel_count / 64);
     printf("Dividing input into 8x8 blocks (Total blocks: %zu)...\n", total_blocks);
     PixelGroup* blocks = divide_image(luminance_matrix, rChrominance_matrix, bChrominance_matrix, image, 8);
 
-    printf("First luminance block (8x8):\n");
-    for (size_t i = 0; i < 8; i++) {
-        for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (blocks[0].lum_values[i * 8 + j]));
-        }
-        printf("\n");
-    }
-
-
-
-    printf("First red chrominance block (4x8):\n");
-    for (size_t i = 0; i < 4; i++) {
-        for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (blocks[0].r_values[i * 8 + j]));
-        }
-        printf("\n");
-    }
-
-
-
     printf("Computing DCT-II coefficients for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
-       // printf("Processing block %zu/%zu\n", i + 1, total_blocks);
-        discrete_cosine_transform(blocks[i].lum_values, 8,8, &(blocks[i].lum_coefficients));
-        discrete_cosine_transform(blocks[i].r_values, 4,8, &(blocks[i].r_coefficients));
-        discrete_cosine_transform(blocks[i].b_values, 4,8, &(blocks[i].b_coefficients));
+        discrete_cosine_transform(blocks[i].lum_values, 8, 8, &(blocks[i].lum_coefficients));
+        discrete_cosine_transform(blocks[i].r_values, 4, 8, &(blocks[i].r_coefficients));
+        discrete_cosine_transform(blocks[i].b_values, 4, 8, &(blocks[i].b_coefficients));
     }
-
-        printf("First luminance coefficients block (8x8):\n");
-    for (size_t i = 0; i < 8; i++) {
-        for (size_t j = 0; j < 8; j++) {
-           printf("%.2f ", blocks[0].lum_coefficients[i * 8 + j]);
-        }
-        printf("\n");
-    }
-
-
 
     printf("Quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
-        //printf("Quantizing block %zu/%zu\n", i + 1, total_blocks);
-       Quantize(&(blocks[i].lum_coefficients), LUMINANCE_QUANTIZATION_TABLE, 64);
-       Quantize(&(blocks[i].b_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
-       Quantize(&(blocks[i].r_coefficients),CHROMINANCE_QUANTIZATION_TABLE, 32);
+        Quantize(&(blocks[i].lum_coefficients), LUMINANCE_QUANTIZATION_TABLE, 64);
+        Quantize(&(blocks[i].b_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
+        Quantize(&(blocks[i].r_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
     }
 
-            printf("First luminance coefficients quantized block (8x8):\n");
-    for (size_t i = 0; i < 8; i++) {
-        for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[0].lum_coefficients[i * 8 + j]));
+    
+        for(size_t n = 0; n<64;n++){
+            printf("%d ", (int)blocks[0].lum_coefficients[n]);
+            if((n+1)%8==0){
+                printf("\n");
+            }
         }
+    printf("\n");
+
+        for (size_t i = 0; i < total_blocks; i++) {
+            double transformed[64]; // temporary array for zigzagged coefficients
+            zigzag_pattern(8, 8, blocks[i].lum_coefficients, transformed);
+        
+            // Copy the transformed data back to the block's lum_coefficients
+            for (size_t j = 0; j < 64; j++) {
+                blocks[i].lum_coefficients[j] = transformed[j];
+            }
+            for(size_t n = 0; n<64;n++){
+                printf("%d ", (int)blocks[0].lum_coefficients[n]);
+                if((n+1)%8==0){
+                    printf("\n");
+                }
+            }
         printf("\n");
-    }
+            double reverse_transformed[64]; // temporary array for reverse zigzagged coefficients
+            reverse_zigzag_pattern(8, 8, blocks[i].lum_coefficients, reverse_transformed);
+        
+            // Copy the reverse-transformed data back to the block's lum_coefficients
+            for (size_t j = 0; j < 64; j++) {
+                blocks[i].lum_coefficients[j] = reverse_transformed[j];
+            }
+
+            for(size_t n = 0; n<64;n++){
+                printf("%d ", (int)blocks[0].lum_coefficients[n]);
+                if((n+1)%8==0){
+                    printf("\n");
+                }
+            }
+        printf("\n");
+        }
+        
 
     printf("Inverse-quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
-        //printf("Inverse quantizing block %zu/%zu\n", i + 1, total_blocks);
-       Inverse_quantize(&(blocks[i].lum_coefficients), LUMINANCE_QUANTIZATION_TABLE, 64);
-           Inverse_quantize(&(blocks[i].b_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
-       Inverse_quantize(&(blocks[i].r_coefficients),CHROMINANCE_QUANTIZATION_TABLE, 32);
+        Inverse_quantize(&(blocks[i].lum_coefficients), LUMINANCE_QUANTIZATION_TABLE, 64);
+        Inverse_quantize(&(blocks[i].b_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
+        Inverse_quantize(&(blocks[i].r_coefficients), CHROMINANCE_QUANTIZATION_TABLE, 32);
     }
 
     printf("Performing Inverse-DCT on the values for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
-       // printf("Inverse DCT on block %zu/%zu\n", i + 1, total_blocks);
-       inverse_discrete_cosine_transform(blocks[i].lum_values, 8,8, blocks[i].lum_coefficients);
-        inverse_discrete_cosine_transform(blocks[i].b_values, 4,8, blocks[i].b_coefficients);
-        inverse_discrete_cosine_transform(blocks[i].r_values, 4,8, blocks[i].r_coefficients);
+        inverse_discrete_cosine_transform(blocks[i].lum_values, 8, 8, blocks[i].lum_coefficients);
+        inverse_discrete_cosine_transform(blocks[i].b_values, 4, 8, blocks[i].b_coefficients);
+        inverse_discrete_cosine_transform(blocks[i].r_values, 4, 8, blocks[i].r_coefficients);
     }
 
     printf("Assembling the reconstructed image...\n");
@@ -674,16 +749,19 @@ int main() {
     printf("Saving the reconstructed PNG image...\n");
     create_png_image("reconstructed.png", new_image.width, new_image.height, new_image.pixels);
 
+    // **Reconstruct chrominance matrices**
+    printf("Reconstructing blue chrominance matrix...\n");
+    uint8_t** reconstructed_bChrominance_matrix;
+    reconstruct_chrominance_matrix(blocks, &reconstructed_bChrominance_matrix, image, 'B');
+    create_bChrominance_image("reconstructed_bChrominance.png", reconstructed_bChrominance_matrix, image);
+
+    printf("Reconstructing red chrominance matrix...\n");
+    uint8_t** reconstructed_rChrominance_matrix;
+    reconstruct_chrominance_matrix(blocks, &reconstructed_rChrominance_matrix, image, 'R');
+    create_rChrominance_image("reconstructed_rChrominance.png", reconstructed_rChrominance_matrix, image);
+
     printf("Calculating Mean Squared Error (MSE)...\n");
     calculate_mse(luminance_matrix, new_image.pixels, new_image.height, new_image.width);
-
-    printf("First luminance block after reconstruction (8x8):\n");
-    for (size_t i = 0; i < 8; i++) {
-        for (size_t j = 0; j < 8; j++) {
-            printf("%d ", (int)(blocks[0].lum_values[i * 8 + j]));
-        }
-        printf("\n");
-    }
 
     printf("Freeing allocated memory...\n");
     for (size_t i = 0; i < total_blocks; i++) {
@@ -695,6 +773,8 @@ int main() {
     free_pixels(image.pixels, image.height);
     free_pixels(new_image.pixels, new_image.height);
 
+
     printf("Program completed successfully.\n");
     return 0;
 }
+
