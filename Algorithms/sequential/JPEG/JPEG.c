@@ -57,6 +57,9 @@ typedef struct {
     double* lum_coefficients;
     double* r_coefficients;
     double* b_coefficients;
+    int* RLE_encoded_lum;
+    int* RLE_encoded_r;
+    int* RLE_encoded_b;
 } PixelGroup;
 
 void free_pixels(Pixel** pixels, int height) {
@@ -596,50 +599,308 @@ void reconstruct_chrominance_matrix(PixelGroup* blocks, uint8_t*** chrominance_m
 
 void zigzag_pattern(size_t width, size_t height, double* input, double* output) {
     size_t index = 0;
-    for (size_t n = 0; n < width + height - 1; n++) {
-        size_t start = (n < height) ? 0 : n - height + 1;
-        size_t end = (n < width) ? n : width - 1;
 
-        if (n % 2 == 0) {
-            for (size_t i = start; i <= end; i++) {
-                size_t x = n - i;
-                size_t y = i;
-                output[index++] = input[x * width + y];
+    for (size_t sum = 0; sum < width + height - 1; sum++) {
+        // Calculate start and end rows based on the sum
+        size_t start_row = (sum < width) ? 0 : sum - width + 1;
+        size_t end_row = (sum < height) ? sum : height - 1;
+
+        if (sum % 2 == 0) {
+            // Traverse the diagonal in reverse if sum is even
+            for (size_t row = end_row; row >= start_row && row < height; row--) {
+                size_t col = sum - row;
+                if (col < width) {
+                    output[index++] = input[row * width + col];
+                }
             }
         } else {
-            for (size_t i = start; i <= end; i++) {
-                size_t x = i;
-                size_t y = n - i;
-                output[index++] = input[x * width + y];
+            // Traverse the diagonal normally if sum is odd
+            for (size_t row = start_row; row <= end_row; row++) {
+                size_t col = sum - row;
+                if (col < width) {
+                    output[index++] = input[row * width + col];
+                }
             }
         }
     }
 }
-
 void reverse_zigzag_pattern(size_t width, size_t height, double* input, double* output) {
     size_t index = 0;
-    for (size_t n = 0; n < width + height - 1; n++) {
-        size_t start = (n < height) ? 0 : n - height + 1;
-        size_t end = (n < width) ? n : width - 1;
 
-        if (n % 2 == 0) {
-            for (size_t i = start; i <= end; i++) {
-                size_t x = n - i;
-                size_t y = i;
-                output[x * width + y] = input[index++];
+    for (size_t sum = 0; sum < width + height - 1; sum++) {
+        // Calculate start and end rows for this diagonal
+        size_t start = (sum < height) ? 0 : sum - height + 1;
+        size_t end = (sum < width) ? sum : height - 1;
+
+        if (sum % 2 == 0) {
+            // Even sum: traverse from bottom to top
+            for (size_t row = end; row >= start && row < height; row--) {
+                size_t col = sum - row;
+                if (col < width) {
+                    output[row * width + col] = input[index++];
+                }
             }
         } else {
-            for (size_t i = start; i <= end; i++) {
-                size_t x = i;
-                size_t y = n - i;
-                output[x * width + y] = input[index++];
+            // Odd sum: traverse from top to bottom
+            for (size_t row = start; row <= end && row < height; row++) {
+                size_t col = sum - row;
+                if (col < width) {
+                    output[row * width + col] = input[index++];
+                }
             }
         }
     }
 }
+
+// RLE Encoding: Input array -> Encoded as [count, value] pairs
+void RLE(double* input, size_t length, int** output, size_t* out_length) {
+    if (length == 0) {
+        *output = NULL;
+        *out_length = 0;
+        return;
+    }
+
+    // Allocate memory for worst-case scenario (each element is distinct)
+    *output = (int*)malloc(sizeof(int) * 2 * length);
+    if (!*output) {
+        perror("Failed to allocate memory for RLE output.");
+        return;
+    }
+
+    size_t out_index = 0;
+    double current_value = input[0];
+    size_t count = 1;
+
+    for (size_t i = 1; i <= length; i++) {
+        if (i < length && (int)input[i] == (int)current_value) {
+            count++;
+        } else {
+            // Store count and value as consecutive integers
+            (*output)[out_index++] = (int)count;
+            (*output)[out_index++] = (int)current_value;
+
+            if (i < length) {
+                current_value = input[i];
+                count = 1;
+            }
+        }
+    }
+
+    *out_length = out_index;
+}
+
+void inverse_RLE(int* input, double* output, size_t max_size, size_t in_length) {
+    size_t index = 0;
+    for (size_t i = 0; i < in_length; i += 2) {
+        
+        int count = input[i];
+        int value = input[i + 1];
+        //printf("Adding %d %d times\n", value, count);
+
+        // Ensure count doesn't exceed array size
+        if (index + count > max_size) {
+            count = max_size - index;
+        }
+
+        // Fill in the output array with the repeated value
+        for (int j = 0; j < count; j++) {
+            if (index < max_size) {
+                output[index++] = (double)value;
+            }
+        }
+    }
+
+    // Fill any remaining space with zeros if index didn't reach max_size
+    while (index < max_size) {
+        output[index++] = 0;
+    }
+}
+
+typedef struct {
+    int count;
+    int value;
+} frequency;
+
+typedef struct Node {
+    int count;
+    int value;
+    struct Node* left;
+    struct Node* right;
+} Node;
+
+typedef struct {
+    int value;
+    char code[32];
+} HuffmanCode;
+
+void calculate_frequency(frequency* frequencies, size_t input_len, int* input, size_t* unique_count) {
+    for (size_t i = 0; i < input_len; i++) {
+        int found = 0;
+        for (size_t j = 0; j < (*unique_count); j++) {
+            if (frequencies[j].value == input[i]) {
+                frequencies[j].count++;
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            frequencies[(*unique_count)].value = input[i];
+            frequencies[(*unique_count)].count = 1;
+            (*unique_count)++;
+        }
+    }
+}
+
+void swap(Node* a, Node* b) {
+    Node temp = *a;
+    *a = *b;
+    *b = temp;
+}
+
+void heapify(Node* heap, size_t heap_size, size_t i) {
+    size_t smallest = i;
+    size_t left = 2 * i + 1;
+    size_t right = 2 * i + 2;
+
+    if (left < heap_size && heap[left].count < heap[smallest].count)
+        smallest = left;
+
+    if (right < heap_size && heap[right].count < heap[smallest].count)
+        smallest = right;
+
+    if (smallest != i) {
+        swap(&heap[i], &heap[smallest]);
+        heapify(heap, heap_size, smallest);
+    }
+}
+
+void build_heap(frequency* frequencies, size_t unique_count, Node** heap) {
+    *heap = malloc(sizeof(Node) * unique_count);
+    if (!*heap) {
+        printf("Memory allocation failed for heap\n");
+        return;
+    }
+
+    for (size_t i = 0; i < unique_count; i++) {
+        (*heap)[i].count = frequencies[i].count;
+        (*heap)[i].value = frequencies[i].value;
+        (*heap)[i].left = NULL;
+        (*heap)[i].right = NULL;
+    }
+
+    for (size_t i = (unique_count / 2) - 1; i < unique_count; i--) {
+        heapify(*heap, unique_count, i);
+    }
+}
+
+Node* build_huffman_tree(Node* heap, size_t* heap_size) {
+    while (*heap_size > 1) {
+        Node left = heap[0];
+        heap[0] = heap[--(*heap_size)];
+        heapify(heap, *heap_size, 0);
+
+        Node right = heap[0];
+        heap[0] = heap[--(*heap_size)];
+        heapify(heap, *heap_size, 0);
+
+        Node* new_node = malloc(sizeof(Node));
+        new_node->count = left.count + right.count;
+        new_node->value = -1;
+        new_node->left = malloc(sizeof(Node));
+        *new_node->left = left;
+        new_node->right = malloc(sizeof(Node));
+        *new_node->right = right;
+
+        heap[*heap_size] = *new_node;
+        (*heap_size)++;
+        heapify(heap, *heap_size, (*heap_size) - 1);
+    }
+    return &heap[0];
+}
+
+void assign_codes(Node* root, char* code, int depth, HuffmanCode* codes, int* code_index) {
+    if (!root) return;
+
+    if (root->value != -1) {
+        codes[*code_index].value = root->value;
+        code[depth] = '\0';
+        strcpy(codes[*code_index].code, code);
+        (*code_index)++;
+        return;
+    }
+
+    code[depth] = '0';
+    assign_codes(root->left, code, depth + 1, codes, code_index);
+
+    code[depth] = '1';
+    assign_codes(root->right, code, depth + 1, codes, code_index);
+}
+
+void generate_encoded_sequence(int* input, size_t input_len, HuffmanCode* codes, int code_count, char* encoded_sequence) {
+    encoded_sequence[0] = '\0';
+    for (size_t i = 0; i < input_len; i++) {
+        for (int j = 0; j < code_count; j++) {
+            if (codes[j].value == input[i]) {
+                strcat(encoded_sequence, codes[j].code);
+                break;
+            }
+        }
+    }
+}
+
+double* decode_huffman(Node* root, const char* encoded_sequence, size_t* decoded_len) {
+    Node* current_node = root;
+    size_t capacity = 100;
+    double* decoded_output = malloc(sizeof(double) * capacity);
+    size_t count = 0;
+
+    for (size_t i = 0; encoded_sequence[i] != '\0'; i++) {
+        current_node = (encoded_sequence[i] == '0') ? current_node->left : current_node->right;
+
+        if (!current_node->left && !current_node->right) {
+            if (count == capacity) {
+                capacity *= 2;
+                decoded_output = realloc(decoded_output, sizeof(double) * capacity);
+            }
+            decoded_output[count++] = (double)current_node->value;
+            current_node = root;
+        }
+    }
+
+    *decoded_len = count;
+    return decoded_output;
+}
+
+HuffmanCode* encode_huffman(int* input, size_t input_len, size_t* code_count, Node** root_out) {
+    frequency* frequencies = malloc(sizeof(frequency) * input_len);
+    size_t unique_count = 0;
+    calculate_frequency(frequencies, input_len, input, &unique_count);
+
+    Node* heap = NULL;
+    build_heap(frequencies, unique_count, &heap);
+
+    size_t heap_size = unique_count;
+    Node* root = build_huffman_tree(heap, &heap_size);
+    *root_out = root;
+
+    HuffmanCode* codes = malloc(sizeof(HuffmanCode) * unique_count);
+    int code_index = 0;
+    char code[32];
+    assign_codes(root, code, 0, codes, &code_index);
+    *code_count = code_index;
+
+    free(frequencies);
+    free(heap);
+
+    return codes;
+}
+
+
+
+
 int main() {
     printf("Constructing file path...\n");
-    char* path = construct_path("og.png", IMAGES_DIRECTORY);
+    char* path = construct_path("rand_8X8.png", IMAGES_DIRECTORY);
     ImageData image = read_image(path);
     free(path);
     
@@ -695,39 +956,218 @@ int main() {
         }
     printf("\n");
 
-        for (size_t i = 0; i < total_blocks; i++) {
-            double transformed[64]; // temporary array for zigzagged coefficients
-            zigzag_pattern(8, 8, blocks[i].lum_coefficients, transformed);
-        
-            // Copy the transformed data back to the block's lum_coefficients
-            for (size_t j = 0; j < 64; j++) {
-                blocks[i].lum_coefficients[j] = transformed[j];
-            }
-            for(size_t n = 0; n<64;n++){
-                printf("%d ", (int)blocks[0].lum_coefficients[n]);
-                if((n+1)%8==0){
-                    printf("\n");
-                }
-            }
-        printf("\n");
-            double reverse_transformed[64]; // temporary array for reverse zigzagged coefficients
-            reverse_zigzag_pattern(8, 8, blocks[i].lum_coefficients, reverse_transformed);
-        
-            // Copy the reverse-transformed data back to the block's lum_coefficients
-            for (size_t j = 0; j < 64; j++) {
-                blocks[i].lum_coefficients[j] = reverse_transformed[j];
-            }
-
-            for(size_t n = 0; n<64;n++){
-                printf("%d ", (int)blocks[0].lum_coefficients[n]);
-                if((n+1)%8==0){
-                    printf("\n");
-                }
-            }
-        printf("\n");
+    for (size_t i = 0; i < total_blocks; i++) {
+        printf("First normal chrominance block:\n");
+        for(size_t j =0;j<32;j++){
+            printf("%d ", (int)blocks[0].r_coefficients[j]);
         }
-        
+        printf("\n");
 
+        // printf("First normal luminance block:\n");
+        // for(size_t j =0;j<64;j++){
+        //     printf("%d ", (int)blocks[0].lum_coefficients[j]);
+        // }
+        // printf("\n");
+
+        double transformed_lum[64];
+        double transformed_r[32];
+        double transformed_b[32]; // temporary array for zigzagged coefficients
+        zigzag_pattern(8, 8, blocks[i].lum_coefficients, transformed_lum);
+        zigzag_pattern(4, 8, blocks[i].r_coefficients, transformed_r);
+        zigzag_pattern(4, 8, blocks[i].b_coefficients, transformed_b);
+
+        // printf("After zigzag - luminance:\n");
+        // for(size_t j =0;j<64;j++){
+        //     printf("%d ", (int)transformed_lum[j]);
+        // }
+        // printf("\n");
+
+        printf("After zigzag - r chrominance:\n");
+        for(size_t j =0;j<32;j++){
+            printf("%d ", (int)transformed_r[j]);
+        }
+        printf("\n");
+
+        // printf("After zigzag - b chrominance:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)transformed_b[j]);
+        // }
+        // printf("\n");
+
+        // Copy the transformed data back to the block's lum_coefficients
+        for (size_t j = 0; j < 64; j++) {
+            blocks[i].lum_coefficients[j] = transformed_lum[j];
+        }
+        for(size_t j =0;j<32;j++){
+            blocks[i].r_coefficients[j] = transformed_r[j];
+            blocks[i].b_coefficients[j] = transformed_b[j];
+        }
+        // printf("First zigzaged chrominance block:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)blocks[0].r_coefficients[j]);
+        // }
+        // printf("\n");
+
+        size_t encoded_length_lum;
+        size_t encoded_length_r;
+        size_t encoded_length_b;
+        
+        RLE(transformed_lum, 64, &(blocks[i].RLE_encoded_lum), &encoded_length_lum);
+        RLE(transformed_r, 32, &(blocks[i].RLE_encoded_r), &encoded_length_r);
+        RLE(transformed_b, 32, &(blocks[i].RLE_encoded_b), &encoded_length_b);
+        printf("RLE Encoded luminance (count, value): ");
+        // for (size_t j = 0; j < encoded_length_lum; j+=2) {
+        //     printf("(%d, %d) ", (int)blocks[i].RLE_encoded_lum[j], (int)blocks[i].RLE_encoded_lum[j+1]);
+        // }
+        // printf("\n");
+
+        printf("RLE Encoded r chrominance (count, value): ");
+        for (size_t j = 0; j < encoded_length_r; j+=2) {
+            printf("(%d, %d) ", (int)blocks[i].RLE_encoded_r[j], (int)blocks[i].RLE_encoded_r[j+1]);
+        }
+        printf("\n");
+
+        // printf("RLE Encoded b chrominance (count, value): ");
+        // for (size_t j = 0; j < encoded_length_b; j+=2) {
+        //     printf("(%d, %d) ", (int)blocks[i].RLE_encoded_b[j], (int)blocks[i].RLE_encoded_b[j+1]);
+        // }
+        // printf("\n");
+
+
+
+        
+    
+    // Encode and decode luminance (64 elements)
+size_t code_count_lum;
+Node* root_lum;
+HuffmanCode* codes_lum = encode_huffman(blocks[i].RLE_encoded_lum, encoded_length_lum, &code_count_lum, &root_lum);
+// Print Huffman codes for Luminance
+printf("\nHuffman Codes for Luminance:\n");
+for (size_t j = 0; j < code_count_lum; j++) {
+    printf("Value: %d -> Code: %s\n", codes_lum[j].value, codes_lum[j].code);
+}
+char encoded_sequence_lum[1024];
+generate_encoded_sequence(blocks[i].RLE_encoded_lum, encoded_length_lum, codes_lum, code_count_lum, encoded_sequence_lum);
+printf("Encoded Luminance Sequence: %s\n", encoded_sequence_lum);
+
+size_t decoded_len_lum;
+double* decoded_output_lum = decode_huffman(root_lum, encoded_sequence_lum, &decoded_len_lum);
+
+printf("Decoded Luminance Output: ");
+for (size_t j = 0; j < decoded_len_lum; j++) {
+    printf("%.2f ", decoded_output_lum[j]);
+}
+printf("\n");
+
+free(codes_lum);
+free(decoded_output_lum);
+
+// // Encode and decode R chrominance (32 elements)
+// size_t code_count_r;
+// Node* root_r;
+// HuffmanCode* codes_r = encode_huffman(blocks[i].RLE_encoded_r, encoded_length_r, &code_count_r, &root_r);
+
+// char encoded_sequence_r[512];
+// generate_encoded_sequence(blocks[i].RLE_encoded_r, encoded_length_r, codes_r, code_count_r, encoded_sequence_r);
+// printf("Encoded R Chrominance Sequence: %s\n", encoded_sequence_r);
+
+// size_t decoded_len_r;
+// double* decoded_output_r = decode_huffman(root_r, encoded_sequence_r, &decoded_len_r);
+
+// printf("Decoded R Chrominance Output: ");
+// for (size_t j = 0; j < decoded_len_r; j++) {
+//     printf("%.2f ", decoded_output_r[j]);
+// }
+// printf("\n");
+
+// free(codes_r);
+// free(decoded_output_r);
+
+// // Encode and decode B chrominance (32 elements)
+// size_t code_count_b;
+// Node* root_b;
+// HuffmanCode* codes_b = encode_huffman(blocks[i].RLE_encoded_b, encoded_length_b, &code_count_b, &root_b);
+
+// char encoded_sequence_b[512];
+// generate_encoded_sequence(blocks[i].RLE_encoded_b, encoded_length_b, codes_b, code_count_b, encoded_sequence_b);
+// printf("Encoded B Chrominance Sequence: %s\n", encoded_sequence_b);
+
+// size_t decoded_len_b;
+// double* decoded_output_b = decode_huffman(root_b, encoded_sequence_b, &decoded_len_b);
+
+// printf("Decoded B Chrominance Output: ");
+// for (size_t j = 0; j < decoded_len_b; j++) {
+//     printf("%.2f ", decoded_output_b[j]);
+// }
+// printf("\n");
+
+// free(codes_b);
+// free(decoded_output_b);
+
+
+
+
+
+
+        inverse_RLE(blocks[i].RLE_encoded_lum, blocks[i].lum_coefficients, 64, encoded_length_lum);
+         inverse_RLE(blocks[i].RLE_encoded_r, blocks[i].r_coefficients, 32, encoded_length_r);
+         inverse_RLE(blocks[i].RLE_encoded_b, blocks[i].b_coefficients, 32, encoded_length_b);
+
+        // printf("After inverse RLE - luminance:\n");
+        // for(size_t j =0;j<64;j++){
+        //     printf("%d ", (int)blocks[i].lum_coefficients[j]);
+        // }
+        // printf("\n");
+
+        printf("After inverse RLE - r chrominance:\n");
+        for(size_t j =0;j<32;j++){
+            printf("%d ", (int)blocks[i].r_coefficients[j]);
+        }
+        printf("\n");
+
+        // printf("After inverse RLE - b chrominance:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)blocks[i].b_coefficients[j]);
+        // }
+        // printf("\n");
+
+        double reverse_transformed_lum[64];
+        double reverse_transformed_r[32];
+        double reverse_transformed_b[32]; // temporary array for reverse zigzagged coefficients
+        reverse_zigzag_pattern(8, 8, blocks[i].lum_coefficients, reverse_transformed_lum);
+        reverse_zigzag_pattern(4, 8, blocks[i].r_coefficients, reverse_transformed_r);
+        reverse_zigzag_pattern(4, 8, blocks[i].b_coefficients, reverse_transformed_b);
+
+        // printf("After reverse zigzag - luminance:\n");
+        // for(size_t j =0;j<64;j++){
+        //     printf("%d ", (int)reverse_transformed_lum[j]);
+        // }
+        // printf("\n");
+
+        printf("After reverse zigzag - r chrominance:\n");
+        for(size_t j =0;j<32;j++){
+            printf("%d ", (int)reverse_transformed_r[j]);
+        }
+        printf("\n");
+
+        // printf("After reverse zigzag - b chrominance:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)reverse_transformed_b[j]);
+        // }
+        // printf("\n");
+
+        // Copy the reverse-transformed data back to the block's lum_coefficients
+        for (size_t j = 0; j < 64; j++) {
+            blocks[i].lum_coefficients[j] = reverse_transformed_lum[j];
+        }
+        for (size_t j = 0; j < 32; j++) {
+            blocks[i].r_coefficients[j] = reverse_transformed_r[j];
+            blocks[i].b_coefficients[j] = reverse_transformed_b[j];
+        }
+    }
+
+        
+        
     printf("Inverse-quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
         Inverse_quantize(&(blocks[i].lum_coefficients), LUMINANCE_QUANTIZATION_TABLE, 64);
@@ -768,6 +1208,9 @@ int main() {
         free(blocks[i].lum_coefficients);
         free(blocks[i].b_coefficients);
         free(blocks[i].r_coefficients);
+        free(blocks[i].RLE_encoded_lum);
+        free(blocks[i].RLE_encoded_r);
+        free(blocks[i].RLE_encoded_b);
     }
     free(blocks);
     free_pixels(image.pixels, image.height);
