@@ -722,177 +722,186 @@ typedef struct {
 } frequency;
 
 typedef struct Node {
-    int count;
-    int value;
-    struct Node* left;
-    struct Node* right;
+int count;
+int value;
+struct Node* left;
+struct Node* right;
 } Node;
 
 typedef struct {
-    int value;
-    char code[32];
+int value;
+char code[32];
 } HuffmanCode;
 
 void calculate_frequency(frequency* frequencies, size_t input_len, int* input, size_t* unique_count) {
-    for (size_t i = 0; i < input_len; i++) {
-        int found = 0;
-        for (size_t j = 0; j < (*unique_count); j++) {
-            if (frequencies[j].value == input[i]) {
-                frequencies[j].count++;
-                found = 1;
-                break;
-            }
-        }
-        if (!found) {
-            frequencies[(*unique_count)].value = input[i];
-            frequencies[(*unique_count)].count = 1;
-            (*unique_count)++;
+for (size_t i = 0; i < input_len; i++) {
+    int found = 0;
+    for (size_t j = 0; j < (*unique_count); j++) {
+        if (frequencies[j].value == input[i] + 1000) {
+            frequencies[j].count++;
+            found = 1;
+            break;
         }
     }
+    if (!found) {
+        frequencies[(*unique_count)].value = input[i] + 1000;
+        frequencies[(*unique_count)].count = 1;
+        (*unique_count)++;
+    }
+}
 }
 
 void swap(Node* a, Node* b) {
-    Node temp = *a;
-    *a = *b;
-    *b = temp;
+Node temp = *a;
+*a = *b;
+*b = temp;
 }
 
 void heapify(Node* heap, size_t heap_size, size_t i) {
-    size_t smallest = i;
-    size_t left = 2 * i + 1;
-    size_t right = 2 * i + 2;
+size_t smallest = i;
+size_t left = 2 * i + 1;
+size_t right = 2 * i + 2;
 
-    if (left < heap_size && heap[left].count < heap[smallest].count)
-        smallest = left;
+if (left < heap_size && heap[left].count < heap[smallest].count)
+    smallest = left;
 
-    if (right < heap_size && heap[right].count < heap[smallest].count)
-        smallest = right;
+if (right < heap_size && heap[right].count < heap[smallest].count)
+    smallest = right;
 
-    if (smallest != i) {
-        swap(&heap[i], &heap[smallest]);
-        heapify(heap, heap_size, smallest);
-    }
+if (smallest != i) {
+    swap(&heap[i], &heap[smallest]);
+    heapify(heap, heap_size, smallest);
+}
 }
 
 void build_heap(frequency* frequencies, size_t unique_count, Node** heap) {
-    *heap = malloc(sizeof(Node) * unique_count);
-    if (!*heap) {
-        printf("Memory allocation failed for heap\n");
-        return;
-    }
+*heap = malloc(sizeof(Node) * unique_count);
+if (!*heap) {
+    printf("Memory allocation failed for heap\n");
+    return;
+}
 
-    for (size_t i = 0; i < unique_count; i++) {
-        (*heap)[i].count = frequencies[i].count;
-        (*heap)[i].value = frequencies[i].value;
-        (*heap)[i].left = NULL;
-        (*heap)[i].right = NULL;
-    }
+for (size_t i = 0; i < unique_count; i++) {
+    (*heap)[i].count = frequencies[i].count;
+    (*heap)[i].value = frequencies[i].value;
+    (*heap)[i].left = NULL;
+    (*heap)[i].right = NULL;
+}
 
-    for (size_t i = (unique_count / 2) - 1; i < unique_count; i--) {
-        heapify(*heap, unique_count, i);
-    }
+for (int i = (int)(unique_count / 2) - 1; i >= 0; i--) {
+    heapify(*heap, unique_count, i);
+}
 }
 
 Node* build_huffman_tree(Node* heap, size_t* heap_size) {
-    while (*heap_size > 1) {
-        Node left = heap[0];
-        heap[0] = heap[--(*heap_size)];
-        heapify(heap, *heap_size, 0);
+while (*heap_size > 1) {
+    Node left = heap[0];
+    heap[0] = heap[--(*heap_size)];
+    heapify(heap, *heap_size, 0);
 
-        Node right = heap[0];
-        heap[0] = heap[--(*heap_size)];
-        heapify(heap, *heap_size, 0);
+    Node right = heap[0];
+    heap[0] = heap[--(*heap_size)];
+    heapify(heap, *heap_size, 0);
 
-        Node* new_node = malloc(sizeof(Node));
-        new_node->count = left.count + right.count;
-        new_node->value = -1;
-        new_node->left = malloc(sizeof(Node));
-        *new_node->left = left;
-        new_node->right = malloc(sizeof(Node));
-        *new_node->right = right;
+    Node* new_node = malloc(sizeof(Node));
+    new_node->count = left.count + right.count;
+    new_node->value = -1;
+    new_node->left = malloc(sizeof(Node));
+    *new_node->left = left;
+    new_node->right = malloc(sizeof(Node));
+    *new_node->right = right;
 
-        heap[*heap_size] = *new_node;
-        (*heap_size)++;
-        heapify(heap, *heap_size, (*heap_size) - 1);
-    }
-    return &heap[0];
+    heap[*heap_size] = *new_node;
+    (*heap_size)++;
+    heapify(heap, *heap_size, (*heap_size) - 1);
+}
+return &heap[0];
 }
 
 void assign_codes(Node* root, char* code, int depth, HuffmanCode* codes, int* code_index) {
-    if (!root) return;
+if (!root) return;
 
-    if (root->value != -1) {
-        codes[*code_index].value = root->value;
-        code[depth] = '\0';
-        strcpy(codes[*code_index].code, code);
-        (*code_index)++;
-        return;
-    }
+if (root->value != -1) {
+    codes[*code_index].value = root->value;
+    code[depth] = '\0';
+    strcpy(codes[*code_index].code, code);
+    (*code_index)++;
+    return;
+}
 
-    code[depth] = '0';
-    assign_codes(root->left, code, depth + 1, codes, code_index);
+code[depth] = '0';
+assign_codes(root->left, code, depth + 1, codes, code_index);
 
-    code[depth] = '1';
-    assign_codes(root->right, code, depth + 1, codes, code_index);
+code[depth] = '1';
+assign_codes(root->right, code, depth + 1, codes, code_index);
+}
+
+void print_codes(HuffmanCode* codes, int code_count) {
+printf("Huffman Codes:\n");
+for (int i = 0; i < code_count; i++) {
+    printf("Value: %d -> Code: %s\n", codes[i].value - 1000, codes[i].code);
+}
 }
 
 void generate_encoded_sequence(int* input, size_t input_len, HuffmanCode* codes, int code_count, char* encoded_sequence) {
-    encoded_sequence[0] = '\0';
-    for (size_t i = 0; i < input_len; i++) {
-        for (int j = 0; j < code_count; j++) {
-            if (codes[j].value == input[i]) {
-                strcat(encoded_sequence, codes[j].code);
-                break;
-            }
+encoded_sequence[0] = '\0';
+for (size_t i = 0; i < input_len; i++) {
+    for (int j = 0; j < code_count; j++) {
+        if (codes[j].value == input[i] + 1000) {
+            strcat(encoded_sequence, codes[j].code);
+            break;
         }
     }
+}
 }
 
 double* decode_huffman(Node* root, const char* encoded_sequence, size_t* decoded_len) {
-    Node* current_node = root;
-    size_t capacity = 100;
-    double* decoded_output = malloc(sizeof(double) * capacity);
-    size_t count = 0;
+Node* current_node = root;
+size_t capacity = 100;
+double* decoded_output = malloc(sizeof(double) * capacity);
+size_t count = 0;
 
-    for (size_t i = 0; encoded_sequence[i] != '\0'; i++) {
-        current_node = (encoded_sequence[i] == '0') ? current_node->left : current_node->right;
+for (size_t i = 0; encoded_sequence[i] != '\0'; i++) {
+    current_node = (encoded_sequence[i] == '0') ? current_node->left : current_node->right;
 
-        if (!current_node->left && !current_node->right) {
-            if (count == capacity) {
-                capacity *= 2;
-                decoded_output = realloc(decoded_output, sizeof(double) * capacity);
-            }
-            decoded_output[count++] = (double)current_node->value;
-            current_node = root;
+    if (!current_node->left && !current_node->right) {
+        if (count == capacity) {
+            capacity *= 2;
+            decoded_output = realloc(decoded_output, sizeof(double) * capacity);
         }
+        decoded_output[count++] = (double)(current_node->value - 1000);
+        current_node = root;
     }
+}
 
-    *decoded_len = count;
-    return decoded_output;
+*decoded_len = count;
+return decoded_output;
 }
 
 HuffmanCode* encode_huffman(int* input, size_t input_len, size_t* code_count, Node** root_out) {
-    frequency* frequencies = malloc(sizeof(frequency) * input_len);
-    size_t unique_count = 0;
-    calculate_frequency(frequencies, input_len, input, &unique_count);
+frequency* frequencies = malloc(sizeof(frequency) * input_len);
+size_t unique_count = 0;
+calculate_frequency(frequencies, input_len, input, &unique_count);
 
-    Node* heap = NULL;
-    build_heap(frequencies, unique_count, &heap);
+Node* heap = NULL;
+build_heap(frequencies, unique_count, &heap);
 
-    size_t heap_size = unique_count;
-    Node* root = build_huffman_tree(heap, &heap_size);
-    *root_out = root;
+size_t heap_size = unique_count;
+Node* root = build_huffman_tree(heap, &heap_size);
+*root_out = root;
 
-    HuffmanCode* codes = malloc(sizeof(HuffmanCode) * unique_count);
-    int code_index = 0;
-    char code[32];
-    assign_codes(root, code, 0, codes, &code_index);
-    *code_count = code_index;
+HuffmanCode* codes = malloc(sizeof(HuffmanCode) * unique_count);
+int code_index = 0;
+char code[32];
+assign_codes(root, code, 0, codes, &code_index);
+*code_count = code_index;
 
-    free(frequencies);
-    free(heap);
+print_codes(codes, code_index);
 
-    return codes;
+free(frequencies);
+free(heap);
+
+return codes;
 }
 
 
@@ -1016,16 +1025,16 @@ int main() {
         RLE(transformed_r, 32, &(blocks[i].RLE_encoded_r), &encoded_length_r);
         RLE(transformed_b, 32, &(blocks[i].RLE_encoded_b), &encoded_length_b);
         printf("RLE Encoded luminance (count, value): ");
-        // for (size_t j = 0; j < encoded_length_lum; j+=2) {
-        //     printf("(%d, %d) ", (int)blocks[i].RLE_encoded_lum[j], (int)blocks[i].RLE_encoded_lum[j+1]);
-        // }
-        // printf("\n");
-
-        printf("RLE Encoded r chrominance (count, value): ");
-        for (size_t j = 0; j < encoded_length_r; j+=2) {
-            printf("(%d, %d) ", (int)blocks[i].RLE_encoded_r[j], (int)blocks[i].RLE_encoded_r[j+1]);
+        for (size_t j = 0; j < encoded_length_lum; j+=2) {
+            printf("(%d, %d) ", (int)blocks[i].RLE_encoded_lum[j], (int)blocks[i].RLE_encoded_lum[j+1]);
         }
         printf("\n");
+
+        // printf("RLE Encoded r chrominance (count, value): ");
+        // for (size_t j = 0; j < encoded_length_r; j+=2) {
+        //     printf("(%d, %d) ", (int)blocks[i].RLE_encoded_r[j], (int)blocks[i].RLE_encoded_r[j+1]);
+        // }
+        // printf("\n");
 
         // printf("RLE Encoded b chrominance (count, value): ");
         // for (size_t j = 0; j < encoded_length_b; j+=2) {
@@ -1042,67 +1051,82 @@ size_t code_count_lum;
 Node* root_lum;
 HuffmanCode* codes_lum = encode_huffman(blocks[i].RLE_encoded_lum, encoded_length_lum, &code_count_lum, &root_lum);
 // Print Huffman codes for Luminance
-printf("\nHuffman Codes for Luminance:\n");
-for (size_t j = 0; j < code_count_lum; j++) {
-    printf("Value: %d -> Code: %s\n", codes_lum[j].value, codes_lum[j].code);
-}
+// printf("\nHuffman Codes for Luminance:\n");
+// for (size_t j = 0; j < code_count_lum; j++) {
+//     printf("Value: %d -> Code: %s\n", codes_lum[j].value, codes_lum[j].code);
+// }
 char encoded_sequence_lum[1024];
 generate_encoded_sequence(blocks[i].RLE_encoded_lum, encoded_length_lum, codes_lum, code_count_lum, encoded_sequence_lum);
-printf("Encoded Luminance Sequence: %s\n", encoded_sequence_lum);
+//printf("Encoded Luminance Sequence: %s\n", encoded_sequence_lum);
 
 size_t decoded_len_lum;
 double* decoded_output_lum = decode_huffman(root_lum, encoded_sequence_lum, &decoded_len_lum);
 
 printf("Decoded Luminance Output: ");
-for (size_t j = 0; j < decoded_len_lum; j++) {
-    printf("%.2f ", decoded_output_lum[j]);
+for (size_t j = 0; j < decoded_len_lum; j+=2) {
+    printf("(%d, %d) ", (int)decoded_output_lum[j], (int)decoded_output_lum[j+1]);
 }
 printf("\n");
+
+// for (size_t j = 0; j < decoded_len_lum; j++) {
+//     blocks[i].RLE_encoded_lum[j] = (int)decoded_output_lum[j];
+// }
+
 
 free(codes_lum);
 free(decoded_output_lum);
 
-// // Encode and decode R chrominance (32 elements)
-// size_t code_count_r;
-// Node* root_r;
-// HuffmanCode* codes_r = encode_huffman(blocks[i].RLE_encoded_r, encoded_length_r, &code_count_r, &root_r);
+// // // Encode and decode R chrominance (32 elements)
+size_t code_count_r;
+Node* root_r;
+HuffmanCode* codes_r = encode_huffman(blocks[i].RLE_encoded_r, encoded_length_r, &code_count_r, &root_r);
 
-// char encoded_sequence_r[512];
-// generate_encoded_sequence(blocks[i].RLE_encoded_r, encoded_length_r, codes_r, code_count_r, encoded_sequence_r);
-// printf("Encoded R Chrominance Sequence: %s\n", encoded_sequence_r);
+char encoded_sequence_r[512];
+generate_encoded_sequence(blocks[i].RLE_encoded_r, encoded_length_r, codes_r, code_count_r, encoded_sequence_r);
+printf("Encoded R Chrominance Sequence: %s\n", encoded_sequence_r);
 
-// size_t decoded_len_r;
-// double* decoded_output_r = decode_huffman(root_r, encoded_sequence_r, &decoded_len_r);
+size_t decoded_len_r;
+double* decoded_output_r = decode_huffman(root_r, encoded_sequence_r, &decoded_len_r);
 
-// printf("Decoded R Chrominance Output: ");
-// for (size_t j = 0; j < decoded_len_r; j++) {
-//     printf("%.2f ", decoded_output_r[j]);
-// }
-// printf("\n");
+printf("Decoded R Chrominance Output: ");
+for (size_t j = 0; j < decoded_len_r; j++) {
+    printf("%.2f ", decoded_output_r[j]);
+}
+printf("\n");
 
-// free(codes_r);
-// free(decoded_output_r);
+for (size_t j = 0; j < 64; j++) {
+    blocks[i].RLE_encoded_r[j] = (int)decoded_output_r[j];
+}
 
-// // Encode and decode B chrominance (32 elements)
-// size_t code_count_b;
-// Node* root_b;
-// HuffmanCode* codes_b = encode_huffman(blocks[i].RLE_encoded_b, encoded_length_b, &code_count_b, &root_b);
+free(codes_r);
+free(decoded_output_r);
 
-// char encoded_sequence_b[512];
-// generate_encoded_sequence(blocks[i].RLE_encoded_b, encoded_length_b, codes_b, code_count_b, encoded_sequence_b);
-// printf("Encoded B Chrominance Sequence: %s\n", encoded_sequence_b);
+// Encode and decode B chrominance (32 elements)
+size_t code_count_b;
+Node* root_b;
+HuffmanCode* codes_b = encode_huffman(blocks[i].RLE_encoded_b, encoded_length_b, &code_count_b, &root_b);
 
-// size_t decoded_len_b;
-// double* decoded_output_b = decode_huffman(root_b, encoded_sequence_b, &decoded_len_b);
+char encoded_sequence_b[512];
+generate_encoded_sequence(blocks[i].RLE_encoded_b, encoded_length_b, codes_b, code_count_b, encoded_sequence_b);
+printf("Encoded B Chrominance Sequence: %s\n", encoded_sequence_b);
 
-// printf("Decoded B Chrominance Output: ");
-// for (size_t j = 0; j < decoded_len_b; j++) {
-//     printf("%.2f ", decoded_output_b[j]);
-// }
-// printf("\n");
+size_t decoded_len_b;
+double* decoded_output_b = decode_huffman(root_b, encoded_sequence_b, &decoded_len_b);
 
-// free(codes_b);
-// free(decoded_output_b);
+printf("Decoded B Chrominance Output: ");
+for (size_t j = 0; j < decoded_len_b; j++) {
+    printf("%.2f ", decoded_output_b[j]);
+}
+printf("\n");
+for (size_t j = 0; j < 64; j++) {
+    blocks[i].RLE_encoded_b[j] = (int)decoded_output_b[j];
+}
+
+free(codes_b);
+free(decoded_output_b);
+
+
+
 
 
 
