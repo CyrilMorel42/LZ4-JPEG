@@ -7,6 +7,7 @@
 #include "stb_image_write.h"
 
 
+
 #define IMAGES_DIRECTORY "../../../Assets/Images/"
 #define OUTPUT_DIRECTORY "../../../Output-Input/Images/"
 #define PI 3.14159265358979323846
@@ -124,6 +125,13 @@ void build_luminance_matrix(ImageData data, uint8_t*** matrix) {
     }
 }
 
+uint8_t clamp(int value) {
+    if (value < 0) return 0;
+    if (value > 255) return 255;
+    return (uint8_t)value;
+}
+
+// Function to build the rChrominance matrix
 void build_rChrominance_matrix(ImageData data, uint8_t*** matrix) {
     printf("Building rChrominance matrix...\n");
     *matrix = malloc(data.height * sizeof(uint8_t*));
@@ -134,12 +142,15 @@ void build_rChrominance_matrix(ImageData data, uint8_t*** matrix) {
 
     for (size_t y = 0; y < data.height; y++) {
         for (size_t x = 0; x < data.width; x++) {
-            (*matrix)[y][x] = 0.5 * data.pixels[y][x].r - 0.42 * data.pixels[y][x].g - 0.081 * data.pixels[y][x].b;
-            //printf("%d\n", (*matrix)[y][x]);
+            // Standard RGB to Cr (rChrominance)
+            int CrValue = (int)(0.439 * data.pixels[y][x].r - 0.368 * data.pixels[y][x].g - 0.071 * data.pixels[y][x].b + 128);
+            //printf("rChrominance (Cr) for pixel (%zu, %zu): %d\n", y, x, CrValue);  // Debug log for Cr
+            (*matrix)[y][x] = clamp(CrValue);
         }
     }
 }
 
+// Function to build the bChrominance matrix
 void build_bChrominance_matrix(ImageData data, uint8_t*** matrix) {
     printf("Building bChrominance matrix...\n");
     *matrix = malloc(data.height * sizeof(uint8_t*));
@@ -150,7 +161,10 @@ void build_bChrominance_matrix(ImageData data, uint8_t*** matrix) {
 
     for (size_t y = 0; y < data.height; y++) {
         for (size_t x = 0; x < data.width; x++) {
-            (*matrix)[y][x] =  0.17 * data.pixels[y][x].r - 0.33 * data.pixels[y][x].g + 0.5 * data.pixels[y][x].b;
+            // Standard RGB to Cb (bChrominance)
+            int CbValue = (int)(-0.148 * data.pixels[y][x].r - 0.291 * data.pixels[y][x].g + 0.439 * data.pixels[y][x].b+128);
+           // printf("bChrominance (Cb) for pixel (%zu, %zu): %d\n", y, x, CbValue);  // Debug log for Cb
+            (*matrix)[y][x] = clamp(CbValue);
         }
     }
 }
@@ -343,6 +357,7 @@ double calculate_mse(uint8_t** original, Pixel** reconstructed, size_t rows, siz
     return mse;
 }
 
+
 void inverse_discrete_cosine_transform(uint8_t* values, size_t width, size_t height, double* coefficients) {
     double* temp_values = malloc(width * height * sizeof(double));
     if (!temp_values) {
@@ -356,45 +371,39 @@ void inverse_discrete_cosine_transform(uint8_t* values, size_t width, size_t hei
     }
 
     // Perform 2D IDCT-II
-    for (size_t x = 0; x < width; x++) {          
-        for (size_t y = 0; y < height; y++) {      
+    for (size_t x = 0; x < height; x++) {
+        for (size_t y = 0; y < width; y++) {
             double sum = 0.0;
 
-           for (size_t u = 0; u < height; u++) {  
-    for (size_t v = 0; v < width; v++) {
-                    double alpha_u = (u == 0) ? sqrt(1.0 / width) : sqrt(2.0 / width);
-                    double alpha_v = (v == 0) ? sqrt(1.0 / height) : sqrt(2.0 / height);
+            for (size_t u = 0; u < height; u++) {
+                for (size_t v = 0; v < width; v++) {
+                    double alpha_u = (u == 0) ? sqrt(1.0 / height) : sqrt(2.0 / height);
+                    double alpha_v = (v == 0) ? sqrt(1.0 / width) : sqrt(2.0 / width);
+                    double cos_x = cos((PI * (2 * x + 1) * u) / (2.0 * height));
+                    double cos_y = cos((PI * (2 * y + 1) * v) / (2.0 * width));
 
-                    double cos_x = cos((PI * (2 * x + 1) * u) / (2.0 * width));
-                    double cos_y = cos((PI * (2 * y + 1) * v) / (2.0 * height));
-
-                    sum += alpha_u * alpha_v *coefficients[u * width + v] * cos_x * cos_y;
+                    sum += alpha_u * alpha_v * coefficients[u * width + v] * cos_x * cos_y;
                 }
             }
 
-            // Store result in temp buffer
+            // Adjust for chrominance channel scaling
             temp_values[x * width + y] = sum;
         }
     }
 
-    // Convert to uint8_t and clamp
+    // Convert to uint8_t and clamp to [0, 255]
     for (size_t i = 0; i < width * height; i++) {
-        int value = (int)round(temp_values[i] + 128.0);
+        int value = (int)round(temp_values[i] + 128.0);  // Shift back to [0, 255] range
         values[i] = (value < 0) ? 0 : (value > 255) ? 255 : (uint8_t)value;
     }
 
     free(temp_values);
 }
 
-
-
-
-
-
-
-void discrete_cosine_transform(uint8_t* data, size_t data_width, size_t data_height, double** coefficients) {
-    *coefficients = malloc(data_width * data_height * sizeof(double));
-    int* corrected_values = malloc(data_width * data_height * sizeof(int));
+// Perform Discrete Cosine Transform (DCT) with chrominance ratio consideration
+void discrete_cosine_transform(uint8_t* data, size_t width, size_t height, double** coefficients) {
+    *coefficients = malloc(width * height * sizeof(double));
+    int* corrected_values = malloc(width * height * sizeof(int));
 
     if (!*coefficients || !corrected_values) {
         free(*coefficients);
@@ -403,43 +412,35 @@ void discrete_cosine_transform(uint8_t* data, size_t data_width, size_t data_hei
         exit(EXIT_FAILURE);
     }
 
-    // Shift input data range
-    for (size_t i = 0; i < data_width * data_height; i++) {
+    // Shift input data range from [0, 255] to [-128, 127]
+    for (size_t i = 0; i < width * height; i++) {
         corrected_values[i] = (int)data[i] - 128;
     }
 
-    // printf("Corrected values:\n");
-    // for (size_t i = 0; i < data_width * data_height; i++) {
-    //     printf("%d ", corrected_values[i]);
-    //     if ((i + 1) % data_width == 0) printf("\n");
-    // }
-    // printf("\n");
-
     // Perform the 2D DCT-II
-    for (size_t u = 0; u < data_height; u++) {  
-        for (size_t v = 0; v < data_width; v++) {  
+    for (size_t u = 0; u < height; u++) {
+        for (size_t v = 0; v < width; v++) {
             double sum = 0.0;
 
-            for (size_t x = 0; x < data_height; x++) { 
-                for (size_t y = 0; y < data_width; y++) { 
-                    double cos_x = cos((PI * (2 * x + 1) * u) / (2.0 * data_height));
-                    double cos_y = cos((PI * (2 * y + 1) * v) / (2.0 * data_width));
-                    sum += corrected_values[x * data_width + y] * cos_x * cos_y;
+            for (size_t x = 0; x < height; x++) {
+                for (size_t y = 0; y < width; y++) {
+                    double cos_x = cos((PI * (2 * x + 1) * u) / (2.0 * height));
+                    double cos_y = cos((PI * (2 * y + 1) * v) / (2.0 * width));
+                    sum += corrected_values[x * width + y] * cos_x * cos_y;
                 }
             }
 
-         //   printf("Sum at (u=%zu, v=%zu): %f\n", u, v, sum);
-
-            double alpha_u = (u == 0) ? 1/sqrt(2) : 1;
-            double alpha_v = (v == 0) ? 1/sqrt(2) : 1;
-            (*coefficients)[u * data_width + v] = alpha_u * alpha_v * sum*(2/(sqrt(data_height*data_width)));
-
-            //printf("Coefficient at (u=%zu, v=%zu): %f\n", u, v, (*coefficients)[u * data_width + v]);
+            double alpha_u = (u == 0) ? sqrt(1.0 / height) : sqrt(2.0 / height);
+            double alpha_v = (v == 0) ? sqrt(1.0 / width) : sqrt(2.0 / width);
+            (*coefficients)[u * width + v] = alpha_u * alpha_v * sum;
         }
     }
 
     free(corrected_values);
 }
+
+
+
 
 
 PixelGroup* divide_image(uint8_t** luminance_values, uint8_t** rChrominance_values, uint8_t** bChrominance_values, ImageData data, size_t group_size) {
@@ -490,12 +491,12 @@ PixelGroup* divide_image(uint8_t** luminance_values, uint8_t** rChrominance_valu
     return groups;
 }
 
-
 void assemble_image(ImageData* output, ImageData original, PixelGroup* groups) {
     output->height = original.height;
     output->width = original.width;
     output->pixel_count = original.pixel_count;
 
+    // Allocate memory for the pixel array
     output->pixels = malloc(output->height * sizeof(Pixel*));
     for (int y = 0; y < output->height; y++) {
         output->pixels[y] = malloc(output->width * sizeof(Pixel));
@@ -517,37 +518,42 @@ void assemble_image(ImageData* output, ImageData original, PixelGroup* groups) {
                     if (global_row < output->height && global_col < output->width) {
                         size_t local_index = local_row * group_size + local_col;
 
-                        // Get luminance value for every pixel
+                        // Get luminance value
                         uint8_t Y = groups[block_index].lum_values[local_index];
 
-                        // Compute the corresponding chroma index (subsampled at 4:2:2)
-                        size_t chroma_index = local_row * (group_size / 2) + (local_col / 2);
+                        // Correct chroma indexing for 4:2:2
+                        size_t chroma_col = local_col / 2;
+                        size_t chroma_index = local_row * (group_size / 2) + chroma_col;
 
-                        // Get shared chrominance values (Cb and Cr are shared between two pixels horizontally)
+                        // Retrieve chrominance values
                         uint8_t Cb = groups[block_index].b_values[chroma_index];
                         uint8_t Cr = groups[block_index].r_values[chroma_index];
 
                         // Convert YCbCr to RGB
-                        int R = (int)(Y + 1.402 * (Cr - 128));
-                        int G = (int)(Y - 0.344136 * (Cb - 128) - 0.714136 * (Cr - 128));
-                        int B = (int)(Y + 1.772 * (Cb - 128));
+                        int R = (int)Y + (int)(1.402 * (Cr - 128));
+                        int G = (int)Y - (int)(0.344136 * (Cb - 128)) - (int)(0.714136 * (Cr - 128));
+                        int B = (int)Y + (int)(1.772 * (Cb - 128));
 
                         // Clamp values to [0, 255]
-                        R = (R < 0) ? 0 : (R > 255) ? 255 : R;
-                        G = (G < 0) ? 0 : (G > 255) ? 255 : G;
-                        B = (B < 0) ? 0 : (B > 255) ? 255 : B;
+                        R = R < 0 ? 0 : (R > 255 ? 255 : R);
+                        G = G < 0 ? 0 : (G > 255 ? 255 : G);
+                        B = B < 0 ? 0 : (B > 255 ? 255 : B);
 
                         // Assign to output pixel
                         output->pixels[global_row][global_col].r = (uint8_t)R;
                         output->pixels[global_row][global_col].g = (uint8_t)G;
                         output->pixels[global_row][global_col].b = (uint8_t)B;
                         output->pixels[global_row][global_col].a = 255;
+
+                        // Debugging output
+                     
                     }
                 }
             }
         }
     }
 }
+
 
 
 void Quantize(double** luminance, size_t* table, size_t size){
@@ -565,7 +571,6 @@ void Inverse_quantize(double** luminance, size_t* table, size_t size){
     }
 }
 
-// Function to reconstruct a chrominance matrix from blocks
 void reconstruct_chrominance_matrix(PixelGroup* blocks, uint8_t*** chrominance_matrix, ImageData image, char channel) {
     size_t block_index = 0;
 
@@ -576,26 +581,41 @@ void reconstruct_chrominance_matrix(PixelGroup* blocks, uint8_t*** chrominance_m
         memset((*chrominance_matrix)[i], 0, image.width * sizeof(uint8_t)); // Initialize to zero
     }
 
-    // Loop through the image in 8x8 blocks
-    for (size_t y = 0; y < image.height; y += 8) {
-        for (size_t x = 0; x < image.width; x += 8) {
+    // Loop through the image in 8x8 blocks (this loop handles the actual block-by-block reconstruction)
+    for (size_t block_row = 0; block_row < (image.height + 7) / 8; block_row++) {
+        for (size_t block_col = 0; block_col < (image.width + 7) / 8; block_col++) {
             PixelGroup* block = &blocks[block_index++];
-            
-            // Chrominance matrices are subsampled (4x8 for 4:2:0 chroma subsampling)
-            for (size_t i = 0; i < 4; i++) {
-                for (size_t j = 0; j < 8; j++) {
-                    if ((y + i) < image.height && (x + j) < image.width) {
-                        if (channel == 'R') {
-                            (*chrominance_matrix)[y + i][x + j] = block->r_values[i * 8 + j];
-                        } else if (channel == 'B') {
-                            (*chrominance_matrix)[y + i][x + j] = block->b_values[i * 8 + j];
-                        }
+
+            // For the given block, reconstruct the chrominance values
+            for (size_t local_row = 0; local_row < 8; local_row++) {
+                size_t global_row = block_row * 8 + local_row;
+
+                if (global_row >= image.height) {
+                    break;
+                }
+
+                for (size_t local_col = 0; local_col < 4; local_col++) {
+                    size_t global_col = block_col * 8 + local_col * 2;
+
+                    if (global_col + 1 >= image.width) {
+                        break;
                     }
+
+                    // Calculate chroma index for subsampled chrominance data
+                    size_t chroma_index = local_row * 4 + local_col;
+
+                    // Retrieve chrominance value from the block
+                    uint8_t chroma_value = (channel == 'R') ? block->r_values[chroma_index] : block->b_values[chroma_index];
+
+                    // Assign chrominance value to two adjacent pixels
+                    (*chrominance_matrix)[global_row][global_col] = chroma_value;
+                    (*chrominance_matrix)[global_row][global_col + 1] = chroma_value;
                 }
             }
         }
     }
 }
+
 
 void zigzag_pattern(size_t width, size_t height, double* input, double* output) {
     size_t index = 0;
@@ -896,7 +916,7 @@ char code[32];
 assign_codes(root, code, 0, codes, &code_index);
 *code_count = code_index;
 
-print_codes(codes, code_index);
+//print_codes(codes, code_index);
 
 free(frequencies);
 free(heap);
@@ -907,9 +927,11 @@ return codes;
 
 
 
+
+
 int main() {
     printf("Constructing file path...\n");
-    char* path = construct_path("rand_8X8.png", IMAGES_DIRECTORY);
+    char* path = construct_path("og.png", IMAGES_DIRECTORY);
     ImageData image = read_image(path);
     free(path);
     
@@ -938,6 +960,8 @@ int main() {
     printf("Performing chroma subsampling on red chrominance...\n");
     chroma_subsample(&rChrominance_matrix, image);
 
+    
+    
     size_t total_blocks = (size_t)ceil((double)image.pixel_count / 64);
     printf("Dividing input into 8x8 blocks (Total blocks: %zu)...\n", total_blocks);
     PixelGroup* blocks = divide_image(luminance_matrix, rChrominance_matrix, bChrominance_matrix, image, 8);
@@ -947,7 +971,10 @@ int main() {
         discrete_cosine_transform(blocks[i].lum_values, 8, 8, &(blocks[i].lum_coefficients));
         discrete_cosine_transform(blocks[i].r_values, 4, 8, &(blocks[i].r_coefficients));
         discrete_cosine_transform(blocks[i].b_values, 4, 8, &(blocks[i].b_coefficients));
+    
     }
+
+   
 
     printf("Quantizing the matrices for all blocks...\n");
     for (size_t i = 0; i < total_blocks; i++) {
@@ -957,20 +984,20 @@ int main() {
     }
 
     
-        for(size_t n = 0; n<64;n++){
-            printf("%d ", (int)blocks[0].lum_coefficients[n]);
-            if((n+1)%8==0){
-                printf("\n");
-            }
-        }
-    printf("\n");
+    //     for(size_t n = 0; n<64;n++){
+    //         printf("%d ", (int)blocks[0].lum_coefficients[n]);
+    //         if((n+1)%8==0){
+    //             printf("\n");
+    //         }
+    //     }
+    // printf("\n");
 
     for (size_t i = 0; i < total_blocks; i++) {
-        printf("First normal chrominance block:\n");
-        for(size_t j =0;j<32;j++){
-            printf("%d ", (int)blocks[0].r_coefficients[j]);
-        }
-        printf("\n");
+        // printf("First normal chrominance block:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)blocks[0].r_coefficients[j]);
+        // }
+        // printf("\n");
 
         // printf("First normal luminance block:\n");
         // for(size_t j =0;j<64;j++){
@@ -991,11 +1018,11 @@ int main() {
         // }
         // printf("\n");
 
-        printf("After zigzag - r chrominance:\n");
-        for(size_t j =0;j<32;j++){
-            printf("%d ", (int)transformed_r[j]);
-        }
-        printf("\n");
+        // printf("After zigzag - r chrominance:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)transformed_r[j]);
+        // }
+        // printf("\n");
 
         // printf("After zigzag - b chrominance:\n");
         // for(size_t j =0;j<32;j++){
@@ -1024,11 +1051,11 @@ int main() {
         RLE(transformed_lum, 64, &(blocks[i].RLE_encoded_lum), &encoded_length_lum);
         RLE(transformed_r, 32, &(blocks[i].RLE_encoded_r), &encoded_length_r);
         RLE(transformed_b, 32, &(blocks[i].RLE_encoded_b), &encoded_length_b);
-        printf("RLE Encoded luminance (count, value): ");
-        for (size_t j = 0; j < encoded_length_lum; j+=2) {
-            printf("(%d, %d) ", (int)blocks[i].RLE_encoded_lum[j], (int)blocks[i].RLE_encoded_lum[j+1]);
-        }
-        printf("\n");
+        // printf("RLE Encoded luminance (count, value): ");
+        // for (size_t j = 0; j < encoded_length_lum; j+=2) {
+        //     printf("(%d, %d) ", (int)blocks[i].RLE_encoded_lum[j], (int)blocks[i].RLE_encoded_lum[j+1]);
+        // }
+        // printf("\n");
 
         // printf("RLE Encoded r chrominance (count, value): ");
         // for (size_t j = 0; j < encoded_length_r; j+=2) {
@@ -1062,11 +1089,11 @@ generate_encoded_sequence(blocks[i].RLE_encoded_lum, encoded_length_lum, codes_l
 size_t decoded_len_lum;
 double* decoded_output_lum = decode_huffman(root_lum, encoded_sequence_lum, &decoded_len_lum);
 
-printf("Decoded Luminance Output: ");
-for (size_t j = 0; j < decoded_len_lum; j+=2) {
-    printf("(%d, %d) ", (int)decoded_output_lum[j], (int)decoded_output_lum[j+1]);
-}
-printf("\n");
+// printf("Decoded Luminance Output: ");
+// for (size_t j = 0; j < decoded_len_lum; j+=2) {
+//     printf("(%d, %d) ", (int)decoded_output_lum[j], (int)decoded_output_lum[j+1]);
+// }
+// printf("\n");
 
 // for (size_t j = 0; j < decoded_len_lum; j++) {
 //     blocks[i].RLE_encoded_lum[j] = (int)decoded_output_lum[j];
@@ -1083,16 +1110,16 @@ HuffmanCode* codes_r = encode_huffman(blocks[i].RLE_encoded_r, encoded_length_r,
 
 char encoded_sequence_r[512];
 generate_encoded_sequence(blocks[i].RLE_encoded_r, encoded_length_r, codes_r, code_count_r, encoded_sequence_r);
-printf("Encoded R Chrominance Sequence: %s\n", encoded_sequence_r);
+// printf("Encoded R Chrominance Sequence: %s\n", encoded_sequence_r);
 
 size_t decoded_len_r;
 double* decoded_output_r = decode_huffman(root_r, encoded_sequence_r, &decoded_len_r);
 
-printf("Decoded R Chrominance Output: ");
-for (size_t j = 0; j < decoded_len_r; j++) {
-    printf("%.2f ", decoded_output_r[j]);
-}
-printf("\n");
+// printf("Decoded R Chrominance Output: ");
+// for (size_t j = 0; j < decoded_len_r; j++) {
+//     printf("%.2f ", decoded_output_r[j]);
+// }
+// printf("\n");
 
 for (size_t j = 0; j < 64; j++) {
     blocks[i].RLE_encoded_r[j] = (int)decoded_output_r[j];
@@ -1108,16 +1135,16 @@ HuffmanCode* codes_b = encode_huffman(blocks[i].RLE_encoded_b, encoded_length_b,
 
 char encoded_sequence_b[512];
 generate_encoded_sequence(blocks[i].RLE_encoded_b, encoded_length_b, codes_b, code_count_b, encoded_sequence_b);
-printf("Encoded B Chrominance Sequence: %s\n", encoded_sequence_b);
+// printf("Encoded B Chrominance Sequence: %s\n", encoded_sequence_b);
 
 size_t decoded_len_b;
 double* decoded_output_b = decode_huffman(root_b, encoded_sequence_b, &decoded_len_b);
 
-printf("Decoded B Chrominance Output: ");
-for (size_t j = 0; j < decoded_len_b; j++) {
-    printf("%.2f ", decoded_output_b[j]);
-}
-printf("\n");
+// printf("Decoded B Chrominance Output: ");
+// for (size_t j = 0; j < decoded_len_b; j++) {
+//     printf("%.2f ", decoded_output_b[j]);
+// }
+// printf("\n");
 for (size_t j = 0; j < 64; j++) {
     blocks[i].RLE_encoded_b[j] = (int)decoded_output_b[j];
 }
@@ -1143,11 +1170,11 @@ free(decoded_output_b);
         // }
         // printf("\n");
 
-        printf("After inverse RLE - r chrominance:\n");
-        for(size_t j =0;j<32;j++){
-            printf("%d ", (int)blocks[i].r_coefficients[j]);
-        }
-        printf("\n");
+        // printf("After inverse RLE - r chrominance:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)blocks[i].r_coefficients[j]);
+        // }
+        // printf("\n");
 
         // printf("After inverse RLE - b chrominance:\n");
         // for(size_t j =0;j<32;j++){
@@ -1168,11 +1195,11 @@ free(decoded_output_b);
         // }
         // printf("\n");
 
-        printf("After reverse zigzag - r chrominance:\n");
-        for(size_t j =0;j<32;j++){
-            printf("%d ", (int)reverse_transformed_r[j]);
-        }
-        printf("\n");
+        // printf("After reverse zigzag - r chrominance:\n");
+        // for(size_t j =0;j<32;j++){
+        //     printf("%d ", (int)reverse_transformed_r[j]);
+        // }
+        // printf("\n");
 
         // printf("After reverse zigzag - b chrominance:\n");
         // for(size_t j =0;j<32;j++){
@@ -1223,6 +1250,8 @@ free(decoded_output_b);
     uint8_t** reconstructed_rChrominance_matrix;
     reconstruct_chrominance_matrix(blocks, &reconstructed_rChrominance_matrix, image, 'R');
     create_rChrominance_image("reconstructed_rChrominance.png", reconstructed_rChrominance_matrix, image);
+
+    
 
     printf("Calculating Mean Squared Error (MSE)...\n");
     calculate_mse(luminance_matrix, new_image.pixels, new_image.height, new_image.width);

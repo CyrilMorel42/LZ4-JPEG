@@ -1,210 +1,123 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <stdint.h>
 #include <math.h>
 
+// Define a structure for ImageData
 typedef struct {
-    int count;
-    int value;
-} frequency;
-
-typedef struct Node {
-    int count;
-    int value;
-    struct Node* left;
-    struct Node* right;
-} Node;
+    uint8_t r, g, b;  // RGB components
+} Pixel;
 
 typedef struct {
-    int value;
-    char code[32];
-} HuffmanCode;
+    size_t width, height;
+    Pixel **pixels;
+} ImageData;
 
-void calculate_frequency(frequency* frequencies, size_t input_len, int* input, size_t* unique_count) {
-    for (size_t i = 0; i < input_len; i++) {
-        int found = 0;
-        for (size_t j = 0; j < (*unique_count); j++) {
-            if (frequencies[j].value == input[i]) {
-                frequencies[j].count++;
-                found = 1;
-                break;
-            }
-        }
-        if (!found) {
-            frequencies[(*unique_count)].value = input[i];
-            frequencies[(*unique_count)].count = 1;
-            (*unique_count)++;
-        }
-    }
+// Function to clamp values within 0-255 range
+uint8_t clamp(int value) {
+    if (value < 0) return 0;
+    if (value > 255) return 255;
+    return (uint8_t)value;
 }
 
-void swap(Node* a, Node* b) {
-    Node temp = *a;
-    *a = *b;
-    *b = temp;
-}
+// Function to build the rChrominance matrix
+void build_rChrominance_matrix(ImageData data, uint8_t*** matrix) {
+    printf("Building rChrominance matrix...\n");
+    *matrix = malloc(data.height * sizeof(uint8_t*));
 
-void heapify(Node* heap, size_t heap_size, size_t i) {
-    size_t smallest = i;
-    size_t left = 2 * i + 1;
-    size_t right = 2 * i + 2;
-
-    if (left < heap_size && heap[left].count < heap[smallest].count)
-        smallest = left;
-
-    if (right < heap_size && heap[right].count < heap[smallest].count)
-        smallest = right;
-
-    if (smallest != i) {
-        swap(&heap[i], &heap[smallest]);
-        heapify(heap, heap_size, smallest);
-    }
-}
-
-void build_heap(frequency* frequencies, size_t unique_count, Node** heap) {
-    *heap = malloc(sizeof(Node) * unique_count);
-    if (!*heap) {
-        printf("Memory allocation failed for heap\n");
-        return;
+    for (int y = 0; y < data.height; y++) {
+        (*matrix)[y] = malloc(data.width * sizeof(uint8_t));
     }
 
-    for (size_t i = 0; i < unique_count; i++) {
-        (*heap)[i].count = frequencies[i].count;
-        (*heap)[i].value = frequencies[i].value;
-        (*heap)[i].left = NULL;
-        (*heap)[i].right = NULL;
-    }
-
-    for (size_t i = (unique_count / 2) - 1; i < unique_count; i--) {
-        heapify(*heap, unique_count, i);
-    }
-}
-
-Node* build_huffman_tree(Node* heap, size_t* heap_size) {
-    while (*heap_size > 1) {
-        Node left = heap[0];
-        heap[0] = heap[--(*heap_size)];
-        heapify(heap, *heap_size, 0);
-
-        Node right = heap[0];
-        heap[0] = heap[--(*heap_size)];
-        heapify(heap, *heap_size, 0);
-
-        Node* new_node = malloc(sizeof(Node));
-        new_node->count = left.count + right.count;
-        new_node->value = -1;
-        new_node->left = malloc(sizeof(Node));
-        *new_node->left = left;
-        new_node->right = malloc(sizeof(Node));
-        *new_node->right = right;
-
-        heap[*heap_size] = *new_node;
-        (*heap_size)++;
-        heapify(heap, *heap_size, (*heap_size) - 1);
-    }
-    return &heap[0];
-}
-
-void assign_codes(Node* root, char* code, int depth, HuffmanCode* codes, int* code_index) {
-    if (!root) return;
-
-    if (root->value != -1) {
-        codes[*code_index].value = root->value;
-        code[depth] = '\0';
-        strcpy(codes[*code_index].code, code);
-        (*code_index)++;
-        return;
-    }
-
-    code[depth] = '0';
-    assign_codes(root->left, code, depth + 1, codes, code_index);
-
-    code[depth] = '1';
-    assign_codes(root->right, code, depth + 1, codes, code_index);
-}
-
-void generate_encoded_sequence(int* input, size_t input_len, HuffmanCode* codes, int code_count, char* encoded_sequence) {
-    encoded_sequence[0] = '\0';
-    for (size_t i = 0; i < input_len; i++) {
-        for (int j = 0; j < code_count; j++) {
-            if (codes[j].value == input[i]) {
-                strcat(encoded_sequence, codes[j].code);
-                break;
-            }
+    for (size_t y = 0; y < data.height; y++) {
+        for (size_t x = 0; x < data.width; x++) {
+            // Standard RGB to Cr (rChrominance)
+            int CrValue = (int)(0.5 * data.pixels[y][x].r - 0.418688 * data.pixels[y][x].g - 0.081312 * data.pixels[y][x].b);
+            printf("rChrominance (Cr) for pixel (%zu, %zu): %d\n", y, x, CrValue);  // Debug log for Cr
+            (*matrix)[y][x] = clamp(CrValue);
         }
     }
 }
 
-double* decode_huffman(Node* root, const char* encoded_sequence, size_t* decoded_len) {
-    Node* current_node = root;
-    size_t capacity = 100;
-    double* decoded_output = malloc(sizeof(double) * capacity);
-    size_t count = 0;
+// Function to build the bChrominance matrix
+void build_bChrominance_matrix(ImageData data, uint8_t*** matrix) {
+    printf("Building bChrominance matrix...\n");
+    *matrix = malloc(data.height * sizeof(uint8_t*));
 
-    for (size_t i = 0; encoded_sequence[i] != '\0'; i++) {
-        current_node = (encoded_sequence[i] == '0') ? current_node->left : current_node->right;
-
-        if (!current_node->left && !current_node->right) {
-            if (count == capacity) {
-                capacity *= 2;
-                decoded_output = realloc(decoded_output, sizeof(double) * capacity);
-            }
-            decoded_output[count++] = (double)current_node->value;
-            current_node = root;
-        }
+    for (int y = 0; y < data.height; y++) {
+        (*matrix)[y] = malloc(data.width * sizeof(uint8_t));
     }
 
-    *decoded_len = count;
-    return decoded_output;
+    for (size_t y = 0; y < data.height; y++) {
+        for (size_t x = 0; x < data.width; x++) {
+            // Standard RGB to Cb (bChrominance)
+            int CbValue = (int)(-0.168736 * data.pixels[y][x].r - 0.331264 * data.pixels[y][x].g + 0.5 * data.pixels[y][x].b);
+            printf("bChrominance (Cb) for pixel (%zu, %zu): %d\n", y, x, CbValue);  // Debug log for Cb
+            (*matrix)[y][x] = clamp(CbValue);
+        }
+    }
 }
 
-HuffmanCode* encode_huffman(int* input, size_t input_len, size_t* code_count, Node** root_out) {
-    frequency* frequencies = malloc(sizeof(frequency) * input_len);
-    size_t unique_count = 0;
-    calculate_frequency(frequencies, input_len, input, &unique_count);
-
-    Node* heap = NULL;
-    build_heap(frequencies, unique_count, &heap);
-
-    size_t heap_size = unique_count;
-    Node* root = build_huffman_tree(heap, &heap_size);
-    *root_out = root;
-
-    HuffmanCode* codes = malloc(sizeof(HuffmanCode) * unique_count);
-    int code_index = 0;
-    char code[32];
-    assign_codes(root, code, 0, codes, &code_index);
-    *code_count = code_index;
-
-    free(frequencies);
-    free(heap);
-
-    return codes;
+// Function to free the dynamically allocated memory for matrices
+void free_matrix(uint8_t** matrix, size_t height) {
+    for (int i = 0; i < height; i++) {
+        free(matrix[i]);
+    }
+    free(matrix);
 }
 
 int main() {
-    int input[] = {1, 1, 1, 2, 2, 3, 4};
-    size_t input_len = sizeof(input) / sizeof(input[0]);
-    size_t code_count;
-    Node* root;
+    // Test data: a small 2x2 image with some basic colors
+    ImageData data;
+    data.width = 2;
+    data.height = 2;
 
-    HuffmanCode* codes = encode_huffman(input, input_len, &code_count, &root);
-
-    char encoded_sequence[1024];
-    generate_encoded_sequence(input, input_len, codes, code_count, encoded_sequence);
-    printf("Encoded Sequence: %s\n", encoded_sequence);
-
-    size_t decoded_len;
-    double* decoded_output = decode_huffman(root, encoded_sequence, &decoded_len);
-
-    printf("Decoded Output: ");
-    for (size_t i = 0; i < decoded_len; i++) {
-        printf("%.2f ", decoded_output[i]);
+    // Allocate memory for pixel data
+    data.pixels = malloc(data.height * sizeof(Pixel*));
+    for (int i = 0; i < data.height; i++) {
+        data.pixels[i] = malloc(data.width * sizeof(Pixel));
     }
-    printf("\n");
 
-    free(codes);
-    free(decoded_output);
+    // Set test RGB values
+    data.pixels[0][0] = (Pixel){255, 0, 0}; // Red
+    data.pixels[0][1] = (Pixel){0, 255, 0}; // Green
+    data.pixels[1][0] = (Pixel){0, 0, 255}; // Blue
+    data.pixels[1][1] = (Pixel){255, 255, 0}; // Yellow
+
+    // Initialize matrices for chrominance components
+    uint8_t **rChrominanceMatrix = NULL;
+    uint8_t **bChrominanceMatrix = NULL;
+
+    // Call the functions to build the chrominance matrices
+    build_rChrominance_matrix(data, &rChrominanceMatrix);
+    build_bChrominance_matrix(data, &bChrominanceMatrix);
+
+    // Print the results for rChrominance (Cr) and bChrominance (Cb)
+    printf("rChrominance (Cr) Matrix:\n");
+    for (int y = 0; y < data.height; y++) {
+        for (int x = 0; x < data.width; x++) {
+            printf("%d ", rChrominanceMatrix[y][x]);
+        }
+        printf("\n");
+    }
+
+    printf("\nbChrominance (Cb) Matrix:\n");
+    for (int y = 0; y < data.height; y++) {
+        for (int x = 0; x < data.width; x++) {
+            printf("%d ", bChrominanceMatrix[y][x]);
+        }
+        printf("\n");
+    }
+
+    // Free dynamically allocated memory
+    free_matrix(rChrominanceMatrix, data.height);
+    free_matrix(bChrominanceMatrix, data.height);
+
+    // Free pixel data
+    for (int i = 0; i < data.height; i++) {
+        free(data.pixels[i]);
+    }
+    free(data.pixels);
 
     return 0;
 }
