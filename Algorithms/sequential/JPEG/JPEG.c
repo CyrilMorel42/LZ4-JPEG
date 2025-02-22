@@ -1098,7 +1098,9 @@ double* decoded_output_lum = decode_huffman(root_lum, encoded_sequence_lum, &dec
 // for (size_t j = 0; j < decoded_len_lum; j++) {
 //     blocks[i].RLE_encoded_lum[j] = (int)decoded_output_lum[j];
 // }
-
+for (size_t j = 0; j < decoded_len_lum; j++) {
+    blocks[i].RLE_encoded_lum[j] = (int)decoded_output_lum[j];
+}
 
 free(codes_lum);
 free(decoded_output_lum);
@@ -1121,7 +1123,7 @@ double* decoded_output_r = decode_huffman(root_r, encoded_sequence_r, &decoded_l
 // }
 // printf("\n");
 
-for (size_t j = 0; j < 64; j++) {
+for (size_t j = 0; j < decoded_len_r; j++) {
     blocks[i].RLE_encoded_r[j] = (int)decoded_output_r[j];
 }
 
@@ -1145,7 +1147,7 @@ double* decoded_output_b = decode_huffman(root_b, encoded_sequence_b, &decoded_l
 //     printf("%.2f ", decoded_output_b[j]);
 // }
 // printf("\n");
-for (size_t j = 0; j < 64; j++) {
+for (size_t j = 0; j < decoded_len_b; j++) {
     blocks[i].RLE_encoded_b[j] = (int)decoded_output_b[j];
 }
 
