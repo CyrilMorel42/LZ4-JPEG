@@ -19,13 +19,19 @@
 #define MAX_MATCH_LENGTH  1024 //arbitrary values
 #define MIN_MATCH_LENGTH  4
 #define WINDOW_SIZE       65535 // limited by the offset measuring 2 bytes
-#define DEFAULT_BLOCK_LENGTH 200 //arbitrary value, must be lower than the length of the input
+#define DEFAULT_BLOCK_LENGTH 300 //arbitrary value, must be lower than the length of the input
 #define DEFAULT_LOG_FILE "../../../Output-Input/log/encoding_log.txt"
 #define DEFAULT_COMPRESSED_FILE "../../../Output-Input/out/compressed.bin"
 #define DEFAULT_UNCOMPRESSED_FILE "../../../Output-Input/out/uncompressed.txt"
 #define DEFAULT_INPUT_FILE "../../../Output-Input/input/input.txt"
 #define DEFAULT_OUTPUT_HEX_FILE "../../../Output-Input/out/compressed.txt"
+CRITICAL_SECTION block_plus;
+CRITICAL_SECTION add_seq;
+CRITICAL_SECTION seq_decode;
 CRITICAL_SECTION block_cs;
+
+
+
 
 typedef struct {
     uint8_t token;
@@ -156,7 +162,7 @@ char** divide_input(const uint8_t* input_data, size_t input_size, size_t block_s
         exit(1);
     }
 
-    printf("Input size: %zu, Block size: %zu, Block count: %zu\n", input_size, block_size, *block_count);
+   // printf("Input size: %zu, Block size: %zu, Block count: %zu\n", input_size, block_size, *block_count);
 
     for (size_t i = 0; i < *block_count; i++) {
         size_t current_block_size = (i == *block_count - 1) ? input_size - i * block_size : block_size;
@@ -188,7 +194,7 @@ char** divide_input(const uint8_t* input_data, size_t input_size, size_t block_s
 
         memcpy(blocks[i], &input_data[i * block_size], current_block_size); //copies the corresponding portion of the input into the block data
 
-        printf("Block %zu allocated with size %zu\n", i, current_block_size);
+       // printf("Block %zu allocated with size %zu\n", i, current_block_size);
     }
 
     return blocks;
@@ -229,31 +235,33 @@ void clear_files(){
 
 #pragma region LZ4_API
 
-//logs all the metadata of a LZ4 sequence into the output
-void print_sequence_details(FILE* log_file, LZ4Sequence* sequence) {
-    fprintf(log_file, "\n");
+//scans the search buffer to find a corresponding sequence of literals, returns the offset and the length
+uint8_t find_longest_match(uint8_t* input, size_t current_index, uint16_t* match_distance) {
+    size_t longest_match_length = 0;
+    size_t longest_match_distance = 0;
 
-    print_binary_to_file(log_file, sequence->token);
+    size_t window_start = (current_index >= WINDOW_SIZE) ? current_index - WINDOW_SIZE : 0;
 
-    fprintf(log_file, "\nByte size: %u\n", sequence->byte_size);
+    for (size_t i = window_start; i < current_index; ++i) {
+        size_t current_match_length = 0;
 
-    fprintf(log_file, "\nMatch Offset: %u\n", sequence->match_offset);
+        while (current_match_length < MAX_MATCH_LENGTH &&
+               (input[i + current_match_length] == input[current_index + current_match_length])) {
+            current_match_length++;
+        }
 
-    fprintf(log_file, "Match Length: %zu\n", sequence->match_length);
-
-    fprintf(log_file, "Literal Length: %zu\n", sequence->literals_count);
-    
-    fprintf(log_file, "Literals: ");
-
-    for (size_t i = 0; i < sequence->literals_count; i++) {
-        if (sequence->literals[i] >= 32 && sequence->literals[i] <= 126) { //printable characters
-            fprintf(log_file, "%c", sequence->literals[i]);
-        } else { //non printable characters
-            fprintf(log_file, "0x%02X", sequence->literals[i]);
+        if (current_match_length > longest_match_length) {
+            longest_match_length = current_match_length;
+            longest_match_distance = current_index - i;
         }
     }
 
-    fprintf(log_file, "\n");
+    if (longest_match_length >= MIN_MATCH_LENGTH) {
+        *match_distance = (uint16_t)longest_match_distance;  
+        return (uint8_t)longest_match_length;
+    } else {
+        return 0;
+    }
 }
 
 //prints all the metadata concerning a LZ4 block
@@ -268,9 +276,9 @@ void print_block_details(FILE* log_file, LZ4Block* block) {
 
     fprintf(log_file, "\n");
 
-    for (size_t i = 0; i < block->sequences_count; i++) {
-        print_sequence_details(log_file, &block->sequences[i]);
-    }
+    // for (size_t i = 0; i < block->sequences_count; i++) {
+    //     print_sequence_details(log_file, &block->sequences[i]);
+    // }
 
     fprintf(log_file, "\n");
 }
@@ -290,36 +298,7 @@ void print_frame_details(FILE* log_file, LZ4Frame* frame) {
     fprintf(log_file, "\n");
 }
 
-//scans the search buffer to find a corresponding sequence of literals, returns the offset and the length
-uint8_t find_longest_match(uint8_t* input, size_t current_index, uint8_t* match_distance) {
-    size_t longest_match_length = 0;
 
-    size_t longest_match_distance = 0;
-
-    size_t window_start = (current_index >= WINDOW_SIZE) ? current_index - WINDOW_SIZE : 0; // handles the case were the search buffer is shorter that its expected length
-
-    for (size_t i = window_start; i < current_index; ++i) {
-        size_t current_match_length = 0;
-
-        while (current_match_length < MAX_MATCH_LENGTH && (input[i + current_match_length] == input[current_index + current_match_length])) {
-            current_match_length++;
-        }
-
-        if (current_match_length > longest_match_length) {
-            longest_match_length = current_match_length;
-
-            longest_match_distance = current_index - i;
-        }
-    }
-
-    if (longest_match_length >= MIN_MATCH_LENGTH) { //ensure a lower bound to ensure compressio and not extension
-        *match_distance = (uint8_t)longest_match_distance;
-
-        return (uint8_t)longest_match_length;
-    } else {
-        return 0;
-    }
-}
 
 void free_sequences(LZ4Block* block) {
     if (block->sequences != NULL) {
@@ -341,9 +320,9 @@ void free_sequences(LZ4Block* block) {
 
 void free_frame(LZ4Frame* frame) {
     if (frame == NULL) return; 
-    printf("frameblocks: %zu\n", frame->blocks);
+    //printf("frameblocks: %zu\n", frame->blocks);
     for (size_t i = 0; i < frame->blocks; ++i) {
-        printf("freeing block %d\n", i);
+       // printf("freeing block %d\n", i);
         free_sequences(&frame->frame_blocks[i]);
     }
 
@@ -422,17 +401,17 @@ void write_output(LZ4Frame* frame, FILE* output_file) {
 
 void add_sequence_to_block(LZ4Sequence seq, LZ4Block* block) {
     // Log the start of the function call
-    printf("add_sequence_to_block called.\n");
-    printf("Current sequences count: %zu\n", block->sequences_count);
+    // printf("add_sequence_to_block called.\n");
+    // printf("Current sequences count: %zu\n", block->sequences_count);
 
     // Log the sequence to be added
-    printf("Adding sequence with byte_size: %zu\n", seq.byte_size);
+    //printf("Adding sequence with byte_size: %zu\n", seq.byte_size);
 
     // Allocate or reallocate memory for the sequences array
     LZ4Sequence* temp_sequences;
     if (block->sequences_count == 0) {
         // First allocation: allocate space for one sequence
-        printf("Allocating memory for the first sequence.\n");
+        //printf("Allocating memory for the first sequence.\n");
         temp_sequences = malloc(sizeof(LZ4Sequence));
         if (temp_sequences == NULL) {
             fprintf(stderr, "Memory allocation failed for sequences array.\n");
@@ -441,7 +420,7 @@ void add_sequence_to_block(LZ4Sequence seq, LZ4Block* block) {
     } else {
         // Reallocate: increase size by 1 each time (consider allocating more for efficiency)
         size_t new_size = block->sequences_count + 1;
-        printf("Reallocating memory. New size: %zu\n", new_size);
+        //printf("Reallocating memory. New size: %zu\n", new_size);
         temp_sequences = realloc(block->sequences, sizeof(LZ4Sequence) * new_size);
 
         // Handle realloc failure
@@ -458,25 +437,25 @@ void add_sequence_to_block(LZ4Sequence seq, LZ4Block* block) {
     block->sequences = temp_sequences;
 
     // Log the successful allocation/reallocation
-    printf("Memory allocation/reallocation successful. Sequences count: %zu\n", block->sequences_count + 1);
+    //printf("Memory allocation/reallocation successful. Sequences count: %zu\n", block->sequences_count + 1);
 
     // Add the new sequence to the block
     block->sequences[block->sequences_count] = seq;
-    printf("Sequence added to block. Sequence index: %zu\n", block->sequences_count);
+    //printf("Sequence added to block. Sequence index: %zu\n", block->sequences_count);
 
     // Update the sequence count and byte size
     block->sequences_count += 1;
     block->byte_size += seq.byte_size;
 
     // Log the updated values
-    printf("Updated sequences_count: %zu\n", block->sequences_count);
+    //printf("Updated sequences_count: %zu\n", block->sequences_count);
     //printf("Updated byte_size: %zu\n", block->byte_size);
 }
 
 
 
 void add_block_to_frame(LZ4Frame* frame, LZ4Block block) {
-    printf("Current number of blocks: %zu\n", frame->blocks);
+    //printf("Current number of blocks: %zu\n", frame->blocks);
 
     if (frame->blocks == 0) {
         frame->frame_blocks = malloc(sizeof(LZ4Block));  
@@ -493,7 +472,7 @@ void add_block_to_frame(LZ4Frame* frame, LZ4Block block) {
             exit(EXIT_FAILURE);
         }
 
-        printf("Reallocating memory for frame_blocks: %zu blocks\n", frame->blocks + 1);
+        //printf("Reallocating memory for frame_blocks: %zu blocks\n", frame->blocks + 1);
 
         LZ4Block* temp = realloc(frame->frame_blocks, sizeof(LZ4Block) * (frame->blocks + 1));
 
@@ -520,18 +499,18 @@ void parallel_add_block_to_frame(LZ4Frame* frame, LZ4Block block, size_t index) 
     }
 
 
-    printf("index: %zu\n", index);
+    //printf("index: %zu\n", index);
 
     frame->frame_blocks[index] = block;
 
-    printf("frame->blocks before increment: %zu\n", frame->blocks);
+    //printf("frame->blocks before increment: %zu\n", frame->blocks);
     
     // Add the block count increment here inside the critical section
-    EnterCriticalSection(&block_cs);
+    EnterCriticalSection(&block_plus);
     frame->blocks++;
-    LeaveCriticalSection(&block_cs);
+    LeaveCriticalSection(&block_plus);
     
-    printf("frame->blocks after increment: %zu\n", frame->blocks);
+    //printf("frame->blocks after increment: %zu\n", frame->blocks);
 }
 
 
@@ -561,9 +540,9 @@ DWORD WINAPI parallel_block_encode(LPVOID lpParam) {
     // Use Critical Section to protect access to the shared block
     
 
-    // Encoding logic (same as before)
+    // Encoding logic 
     while (input_index < block_length) {
-        uint8_t match_distance = 0;
+        uint16_t match_distance = 0;  
         uint8_t match_length = find_longest_match(input, input_index, &match_distance);
 
         if (match_length == 0) { // write the literal value
@@ -579,7 +558,7 @@ DWORD WINAPI parallel_block_encode(LPVOID lpParam) {
             current_sequence.match_length = match_length;
 
             uint8_t token_literals_count = (literal_counter >= 15) ? 15 : literal_counter;
-            uint8_t token_match_length = (match_length >= 15) ? 15 : match_length - MIN_MATCH_LENGTH;
+            uint8_t token_match_length = (match_length >= 19) ? 15 : match_length - MIN_MATCH_LENGTH;
 
             current_sequence.token = (token_literals_count << 4) | token_match_length;
             current_sequence.byte_size = sizeof(uint8_t)*(literal_counter + 5);
@@ -602,10 +581,10 @@ DWORD WINAPI parallel_block_encode(LPVOID lpParam) {
                 }
                 current_sequence.byte_size++;
             }
-            EnterCriticalSection(&block_cs);  // Lock the critical section
+            EnterCriticalSection(&add_seq);  // Lock the critical section
             // Add sequence to block (protected by the critical section)
             add_sequence_to_block(current_sequence, block);
-            LeaveCriticalSection(&block_cs);
+            LeaveCriticalSection(&add_seq);
             literal_counter = 0;
             input_index += match_length;
         }
@@ -630,11 +609,11 @@ DWORD WINAPI parallel_block_encode(LPVOID lpParam) {
         }
 
         // Add final sequence to block (protected by the critical section)
-        EnterCriticalSection(&block_cs);  // Lock the critical section
+        EnterCriticalSection(&add_seq);  // Lock the critical section
             // Add sequence to block (protected by the critical section)
             
             add_sequence_to_block(current_sequence, block);
-            LeaveCriticalSection(&block_cs);
+            LeaveCriticalSection(&add_seq);
     }
 
     block->token = block->sequences_count;
@@ -704,16 +683,16 @@ void parallel_LZ4_encode() {
         exit(1);
     }
 
-    printf("Encoding started\n");
+    //printf("Encoding started\n");
 
-    ensure_directories();
+    //ensure_directories();
 
     FILE* log_file = safe_open(DEFAULT_LOG_FILE, "a");
     FILE* input_file = safe_open(DEFAULT_INPUT_FILE, "r");
     FILE* output_file = safe_open(DEFAULT_COMPRESSED_FILE, "ab");
 
     LZ4Context context = extract_uncompressed_file(input_file);
-    printf("File extracted. Input size: %zu bytes\n", context.input_size);
+    //printf("File extracted. Input size: %zu bytes\n", context.input_size);
 
     LZ4Frame frame;
     frame.blocks = 0;
@@ -723,7 +702,7 @@ void parallel_LZ4_encode() {
     size_t block_count = 0;
 
     char** blocks = divide_input(context.input_data, context.input_size, block_size, &block_count);
-    printf("Input divided into %zu blocks\n", block_count);
+    //printf("Input divided into %zu blocks\n", block_count);
 
    
     frame.frame_blocks = malloc(sizeof(LZ4Block) * block_count);
@@ -743,7 +722,7 @@ if (frame.frame_blocks == NULL) {
     InitializeCriticalSection(&block_cs);
 
     for (size_t i = 0; i < block_count; i++) {
-        printf("Processing block %zu\n", i);
+        //printf("Processing block %zu\n", i);
 
         // Prepare arguments for each thread
         BlockEncodeArgs* args = malloc(sizeof(BlockEncodeArgs));
@@ -782,11 +761,11 @@ if (frame.frame_blocks == NULL) {
 
     DeleteCriticalSection(&block_cs);
 
-    printf("Blocks encoded\n");
+    //printf("Blocks encoded\n");
 
-     print_frame_details(log_file, &frame);
+    // print_frame_details(log_file, &frame);
      write_output(&frame, output_file); // Write the encoded sequence to the output file
-     printf("Output written\n");
+     //printf("Output written\n");
 
     fclose(log_file);
     fclose(output_file);
@@ -796,21 +775,21 @@ if (frame.frame_blocks == NULL) {
 
 
     dump_to_hex_file(DEFAULT_COMPRESSED_FILE, DEFAULT_OUTPUT_HEX_FILE);
-    printf("Encoding completed. Check %s for details.\n", DEFAULT_LOG_FILE);
+    //printf("Encoding completed. Check %s for details.\n", DEFAULT_LOG_FILE);
 }
 
 
 void sequence_decode(char* input_data, LZ4Sequence* seq) {
-    printf("Input data: ");
-    for (int i = 0; i < seq->byte_size; i++) {
-        printf("%02X ", (unsigned char)input_data[i]);
-    }
-    printf("\n");
+    //printf("Input data: ");
+    // for (int i = 0; i < seq->byte_size; i++) {
+    //     printf("%02X ", (unsigned char)input_data[i]);
+    // }
+    // printf("\n");
 
     seq->token = input_data[0];
     size_t pointer = 3;  // Start after the token
 
-    printf("Token (Hex): %02X\n", seq->token);
+    //printf("Token (Hex): %02X\n", seq->token);
 
     seq->literals_count = (seq->token & 0xF0) >> 4;
     seq->match_length = seq->token & 0x0F;
@@ -833,10 +812,10 @@ void sequence_decode(char* input_data, LZ4Sequence* seq) {
             return;
         }
     }
-    printf("pointer: %d\n", pointer);
+    // printf("pointer: %d\n", pointer);
 
-    printf("Match length: %d\n", seq->match_length);
-    printf("Literal length: %d\n", seq->literals_count);
+    // printf("Match length: %d\n", seq->match_length);
+    // printf("Literal length: %d\n", seq->literals_count);
 
     // Allocate memory for literals
     if (seq->literals_count > 0) {
@@ -854,23 +833,23 @@ void sequence_decode(char* input_data, LZ4Sequence* seq) {
         seq->literals[i] = input_data[pointer + i];
     }
     pointer += seq->literals_count;
-    printf("pointer: %d\n", pointer);  // Move the pointer past the literals
+    // printf("pointer: %d\n", pointer);  // Move the pointer past the literals
 
-    printf("Literals: ");
-    for (size_t i = 0; i < seq->literals_count; i++) {
-        if (seq->literals[i] >= 32 && seq->literals[i] <= 126) {
-            printf("%c", seq->literals[i]);
-        } else {
-            printf("0x%02X", (unsigned char)seq->literals[i]);
-        }
-    }
-    printf("\n");
-    printf("pointer: %d\n", pointer);
+    // printf("Literals: ");
+    // for (size_t i = 0; i < seq->literals_count; i++) {
+    //     if (seq->literals[i] >= 32 && seq->literals[i] <= 126) {
+    //         printf("%c", seq->literals[i]);
+    //     } else {
+    //         printf("0x%02X", (unsigned char)seq->literals[i]);
+    //     }
+    // }
+    // printf("\n");
+    // printf("pointer: %d\n", pointer);
     seq->match_offset = (uint16_t)((unsigned char)input_data[pointer] | ((unsigned char)input_data[pointer + 1] << 8));
 
     pointer += 2;  // Move pointer past the match offset
 
-    printf("Match offset: %d\n", seq->match_offset);
+    //printf("Match offset: %d\n", seq->match_offset);
 
     // Now handle match length if greater than or equal to 15
     if (seq->match_length >= 15) {
@@ -882,12 +861,12 @@ void sequence_decode(char* input_data, LZ4Sequence* seq) {
         seq->match_length += (size_t)(unsigned char)input_data[pointer];
         pointer++;  // Move pointer after the match length byte
 
-        printf("Adding input_data[pointer] = %X (decimal: %zu), new match_length: %zu\n", 
-                (unsigned char)input_data[pointer], (size_t)(unsigned char)input_data[pointer], seq->match_length);
+        //printf("Adding input_data[pointer] = %X (decimal: %zu), new match_length: %zu\n", 
+          //      (unsigned char)input_data[pointer], (size_t)(unsigned char)input_data[pointer], seq->match_length);
     }
 
     seq->match_length += 4;  // Adjust for the true match length
-    printf("Final Match length: %zu\n", seq->match_length);
+   // printf("Final Match length: %zu\n", seq->match_length);
 }
 
 
@@ -898,19 +877,9 @@ void parallel_decode_add_block_to_frame(LZ4Frame* frame, LZ4Block block, size_t 
     }
 
 
-    printf("index: %zu\n", index);
+    //printf("index: %zu\n", index);
 
     frame->frame_blocks[index] = block;
-    if(index>frame->blocks)
-
-    printf("frame->blocks before increment: %zu\n", frame->blocks);
-    
-    // Add the block count increment here inside the critical section
-    EnterCriticalSection(&block_cs);
-    //frame->blocks++;
-    LeaveCriticalSection(&block_cs);
-    
-    printf("frame->blocks after increment: %zu\n", frame->blocks);
 }
 
 
@@ -926,30 +895,30 @@ DWORD WINAPI parallel_block_decode(LPVOID LpParam) {
         return 0;
     }
 
-    printf("Input data 0: %02X\n", input_data[0]);
+    //printf("Input data 0: %02X\n", input_data[0]);
     size_t block_data_size = args->block_size;
-    printf("Block size: %zu\n", block_data_size);
+    //printf("Block size: %zu\n", block_data_size);
 
     // Printing input data in chunks of 16 bytes
 
 
     block->token = input_data[0];
     size_t pointer = 0;
-    printf("Initial token: %d\n", block->token);
+    //printf("Initial token: %d\n", block->token);
 
-    printf("Entering loop to process sequences...\n");
+   // printf("Entering loop to process sequences...\n");
 
     for (size_t i = 0; i < block->token; i++) {
-    printf("Processing sequence %zu, pointer: %zu\n", i, pointer);
+    //printf("Processing sequence %zu, pointer: %zu\n", i, pointer);
     LZ4Sequence seq;
 
 
     // Debugging the byte values before calculating seq.byte_size
-    printf("input_data[%zu + 4]: %02X, input_data[%zu + 5]: %02X\n", pointer, input_data[pointer + 4], pointer, input_data[pointer + 5]);
+    //printf("input_data[%zu + 4]: %02X, input_data[%zu + 5]: %02X\n", pointer, input_data[pointer + 4], pointer, input_data[pointer + 5]);
 
     // Correctly calculate seq.byte_size
     seq.byte_size = (uint16_t)(input_data[pointer + 4]) + ((uint16_t)(input_data[pointer + 5]) << 8);
-    printf("Calculated seq.byte_size: %d\n", seq.byte_size);
+    //printf("Calculated seq.byte_size: %d\n", seq.byte_size);
 
 
 
@@ -961,16 +930,16 @@ DWORD WINAPI parallel_block_decode(LPVOID LpParam) {
 
     memcpy(seq_data, &input_data[pointer + 3], seq.byte_size);
 
-    EnterCriticalSection(&block_cs);
+    EnterCriticalSection(&seq_decode);
 
     sequence_decode(seq_data, &seq);  // Decode sequence
     add_sequence_to_block(seq, block);  // Update block with sequence data
     
     block->byte_size -= seq.byte_size;
-    printf("Block byte_size after adding sequence: %zu\n", block->byte_size);
+    //printf("Block byte_size after adding sequence: %zu\n", block->byte_size);
     
-    LeaveCriticalSection(&block_cs);
-    printf("After critical section\n");
+    LeaveCriticalSection(&seq_decode);
+   // printf("After critical section\n");
 
 
             pointer += seq.byte_size;
@@ -979,21 +948,21 @@ DWORD WINAPI parallel_block_decode(LPVOID LpParam) {
 
 }
 
-    printf("Block byte size before final print: %zu\n", block->byte_size);
-    EnterCriticalSection(&block_cs);
-    printf("Calling parallel_add_block_to_frame with arguments:\n");
-printf("Frame pointer: %p\n", args->frame);
-printf("Block byte size: %zu\n", block->byte_size);
-printf("Block token: %d\n", block->sequences_count);
+    //printf("Block byte size before final print: %zu\n", block->byte_size);
 
-printf("Block index: %zu\n", args->index);
+   // printf("Calling parallel_add_block_to_frame with arguments:\n");
+// printf("Frame pointer: %p\n", args->frame);
+// printf("Block byte size: %zu\n", block->byte_size);
+// printf("Block token: %d\n", block->sequences_count);
+
+// printf("Block index: %zu\n", args->index);
 
 // Now call the function
 parallel_decode_add_block_to_frame(args->frame, *block, args->index);
 
-printf("Block added succesfully\n");
+// printf("Block added succesfully\n");
 
-    LeaveCriticalSection(&block_cs);
+
 
 
     free(args);
@@ -1013,7 +982,7 @@ char* extract_compressed_bin_file(FILE* file) {
         exit(EXIT_FAILURE);
     }
 
-    printf("File size: %zu bytes\n", file_size);
+    //printf("File size: %zu bytes\n", file_size);
 
     fseek(file, 0, SEEK_SET);
 
@@ -1026,7 +995,7 @@ char* extract_compressed_bin_file(FILE* file) {
     }
 
     size_t bytes_read = fread(input, 1, file_size, file);
-    printf("Bytes read: %zu bytes\n", bytes_read);
+    //printf("Bytes read: %zu bytes\n", bytes_read);
 
     if (bytes_read != file_size) {
         fprintf(stderr, "Error: Expected %zu bytes, but only read %zu bytes.\n", file_size, bytes_read);
@@ -1041,7 +1010,7 @@ char* extract_compressed_bin_file(FILE* file) {
 void interpret_sequence(LZ4Sequence sequence, uint8_t* decompressed_buffer, size_t* decompressed_size) {
     if (sequence.literals == NULL || sequence.literals_count == 0) {
         // If there are no literals, skip the copying step
-        printf("No literals to process, proceeding to matches.\n");
+        //printf("No literals to process, proceeding to matches.\n");
     }
 
     size_t current_pos = *decompressed_size;  // Keep track of where to place new decompressed data
@@ -1060,11 +1029,11 @@ void interpret_sequence(LZ4Sequence sequence, uint8_t* decompressed_buffer, size
     // // Always process matches (even when literals_count == 0)
      if (sequence.match_offset != 0) {
     //     // Apply matches: reference earlier decompressed data
-        printf("encoding match: ");
+        //printf("encoding match: ");
         for (size_t i = 0; i < sequence.match_length; i++) {
 
              size_t match_pos = current_pos - sequence.match_offset;
-             printf("%zu, %zu\n", current_pos, sequence.match_offset);
+             //printf("%zu, %zu\n", current_pos, sequence.match_offset);
 
             // Check if the match_pos is within bounds (it should be a valid reference to already decompressed data)
             if (match_pos < current_pos) {
@@ -1075,7 +1044,7 @@ void interpret_sequence(LZ4Sequence sequence, uint8_t* decompressed_buffer, size
                 return;
             }
         }
-        printf("\n");
+        //printf("\n");
      }
 
     // Update decompressed size after processing this sequence
@@ -1100,11 +1069,11 @@ void interpret_frame(LZ4Frame frame) {
 
     // Process each block in the frame
     for (size_t i = 0; i < frame.blocks; i++) {
-        printf("intepreting block %d\n", i);
+        //printf("intepreting block %d\n", i);
         // Process each sequence in the block
         for (size_t j = 0; j < frame.frame_blocks[i].sequences_count; j++) {
             // Pass the buffer and current decompressed size to interpret_sequence
-            printf("intepreting sequence %d\n", j);
+            //printf("intepreting sequence %d\n", j);
             interpret_sequence(frame.frame_blocks[i].sequences[j], decompressed_buffer, &decompressed_size);
         }
     }
@@ -1139,7 +1108,7 @@ void parallel_LZ4_decode(char* input_bin_file, char* log) {
         exit(1);
     }
 
-    ensure_directories();
+    //ensure_directories();
 
     FILE* input_file = safe_open(input_bin_file, "rb");
     FILE* log_file = safe_open(log, "a");
@@ -1215,14 +1184,14 @@ void parallel_LZ4_decode(char* input_bin_file, char* log) {
 
         // Update pointer for the next block
         pointer += byte_size;
-        printf("block done");
+        //printf("block done");
 
             }
-            printf("frame done");
+            //printf("frame done");
 
     // Wait for all threads to finish
     WaitForMultipleObjects(block_count, threads, TRUE, INFINITE);
-    printf("parallel done");
+    //printf("parallel done");
 
     // Clean up thread resources
     for (size_t i = 0; i < block_count; i++) {
@@ -1238,7 +1207,7 @@ void parallel_LZ4_decode(char* input_bin_file, char* log) {
     DeleteCriticalSection(&block_cs);
 
     // Print details and process the decoded frame
-    print_frame_details(log_file, &frame_decode);
+    //print_frame_details(log_file, &frame_decode);
 
     // Free the input buffer and decode the frame
     free(input);
@@ -1256,13 +1225,26 @@ void parallel_LZ4_decode(char* input_bin_file, char* log) {
 #pragma endregion LZ4_API
 
 int main() {
-    ensure_directories();
-
+    //ensure_directories();
+    InitializeCriticalSection(&block_plus);
+    InitializeCriticalSection(&add_seq);
+    InitializeCriticalSection(&seq_decode);
     clear_files();
 
     parallel_LZ4_encode();
 
     parallel_LZ4_decode(DEFAULT_COMPRESSED_FILE, DEFAULT_LOG_FILE);
 
+    DeleteCriticalSection(&block_plus);
+    DeleteCriticalSection(&add_seq);
+    DeleteCriticalSection(&seq_decode);
+
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
+
+    int num_cores = sysInfo.dwNumberOfProcessors;  // Number of cores (logical processors)
+    printf("Number of cores available: %d\n", num_cores);
+
+    return 0;
     return 0;
 }

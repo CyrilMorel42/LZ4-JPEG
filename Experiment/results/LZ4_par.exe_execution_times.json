@@ -1,0 +1,20 @@
+[
+    {
+        "text": 350,
+        "exe_name": "LZ4_par.exe",
+        "execution_times_sec": [
+            0.086000,
+            0.051000,
+            0.046000,
+            0.046000,
+            0.050000,
+            0.048000,
+            0.049000,
+            0.048000,
+            0.046000,
+            0.047000
+        ],
+        "mean_execution_time_sec": 0.048125,
+        "median_execution_time_sec": 0.048000
+    }
+]

@@ -1,0 +1,218 @@
+[
+    {
+        "image_size": 1,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.187000,
+            0.050000,
+            0.049000,
+            0.049000,
+            0.049000,
+            0.050000,
+            0.049000,
+            0.048000,
+            0.046000,
+            0.046000
+        ],
+        "mean_execution_time_sec": 0.048750,
+        "median_execution_time_sec": 0.049000
+    },
+    {
+        "image_size": 2,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.048000,
+            0.054000,
+            0.048000,
+            0.047000,
+            0.047000,
+            0.049000,
+            0.047000,
+            0.045000,
+            0.048000,
+            0.047000
+        ],
+        "mean_execution_time_sec": 0.047625,
+        "median_execution_time_sec": 0.047500
+    },
+    {
+        "image_size": 4,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.045000,
+            0.058000,
+            0.053000,
+            0.055000,
+            0.054000,
+            0.052000,
+            0.054000,
+            0.045000,
+            0.049000,
+            0.046000
+        ],
+        "mean_execution_time_sec": 0.051000,
+        "median_execution_time_sec": 0.052500
+    },
+    {
+        "image_size": 8,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.049000,
+            0.059000,
+            0.057000,
+            0.052000,
+            0.050000,
+            0.049000,
+            0.047000,
+            0.048000,
+            0.046000,
+            0.046000
+        ],
+        "mean_execution_time_sec": 0.049750,
+        "median_execution_time_sec": 0.049000
+    },
+    {
+        "image_size": 16,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.052000,
+            0.058000,
+            0.050000,
+            0.051000,
+            0.058000,
+            0.055000,
+            0.050000,
+            0.045000,
+            0.049000,
+            0.049000
+        ],
+        "mean_execution_time_sec": 0.051750,
+        "median_execution_time_sec": 0.050500
+    },
+    {
+        "image_size": 32,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.065000,
+            0.059000,
+            0.072000,
+            0.063000,
+            0.063000,
+            0.065000,
+            0.062000,
+            0.060000,
+            0.066000,
+            0.062000
+        ],
+        "mean_execution_time_sec": 0.063250,
+        "median_execution_time_sec": 0.063000
+    },
+    {
+        "image_size": 64,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.107000,
+            0.132000,
+            0.118000,
+            0.106000,
+            0.115000,
+            0.125000,
+            0.116000,
+            0.115000,
+            0.112000,
+            0.114000
+        ],
+        "mean_execution_time_sec": 0.115250,
+        "median_execution_time_sec": 0.115000
+    },
+    {
+        "image_size": 128,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.242000,
+            0.268000,
+            0.227000,
+            0.175000,
+            0.169000,
+            0.254000,
+            0.257000,
+            0.216000,
+            0.218000,
+            0.312000
+        ],
+        "mean_execution_time_sec": 0.232125,
+        "median_execution_time_sec": 0.234500
+    },
+    {
+        "image_size": 256,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            0.764000,
+            0.787000,
+            0.553000,
+            0.802000,
+            0.784000,
+            0.743000,
+            0.843000,
+            0.539000,
+            0.815000,
+            0.723000
+        ],
+        "mean_execution_time_sec": 0.746375,
+        "median_execution_time_sec": 0.774000
+    },
+    {
+        "image_size": 512,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            1.763000,
+            1.784000,
+            1.755000,
+            1.784000,
+            1.727000,
+            1.736000,
+            1.717000,
+            1.701000,
+            1.722000,
+            1.717000
+        ],
+        "mean_execution_time_sec": 1.740125,
+        "median_execution_time_sec": 1.731500
+    },
+    {
+        "image_size": 1024,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            6.684000,
+            6.730000,
+            6.751000,
+            6.926000,
+            6.727000,
+            6.625000,
+            6.661000,
+            6.632000,
+            6.791000,
+            6.626000
+        ],
+        "mean_execution_time_sec": 6.700250,
+        "median_execution_time_sec": 6.705500
+    },
+    {
+        "image_size": 2048,
+        "exe_name": "JPEG_par.exe",
+        "execution_times_sec": [
+            26.892000,
+            26.765000,
+            26.807000,
+            26.644000,
+            26.668000,
+            26.682000,
+            26.671000,
+            26.815000,
+            26.586000,
+            26.529000
+        ],
+        "mean_execution_time_sec": 26.704750,
+        "median_execution_time_sec": 26.676500
+    }
+]
